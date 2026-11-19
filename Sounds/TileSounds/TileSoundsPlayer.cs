@@ -33,22 +33,33 @@ public class TileSoundsPlayer : ModPlayer {
         _woodsBuffer.Clear();
 
         // was i on crack doing an 80x80 square before???
-        var tileList = GeneralHelpers.GetTileSquareCoordinates(playerTilePos.X, playerTilePos.Y, 40, 40);
-
         static bool IsTileTypeWood(int type) => FootstepHandler.BluntWood.Contains(type) || FootstepHandler.FilledWood.Contains(type);
 
-        foreach (var tileCoord in tileList) {
-            Tile acTile = Framing.GetTileSafely(tileCoord);
-            Tile belowTile = Framing.GetTileSafely(tileCoord.X, tileCoord.Y + 1);
+        // 直接双层循环，避免为 1600 个格子分配一个 List<Point>（原先每次触发都要建一个新列表）。
+        const int half = 20;
+        int minX = playerTilePos.X - half;
+        int maxX = playerTilePos.X + half;
+        int minY = playerTilePos.Y - half;
+        int maxY = playerTilePos.Y + half;
 
-            // is wood?
-            if (!IsTileTypeWood(acTile.TileType)) continue;
-            // unsupported?
-            if (belowTile.HasTile) continue;
-            // actuated?
-            if (acTile.CollisionType() != 1) continue;
+        for (int x = minX; x < maxX; x++) {
+            if (x < 0 || x >= Main.maxTilesX) continue;
 
-            _woodsBuffer.Add(tileCoord);
+            for (int y = minY; y < maxY; y++) {
+                if (y < 0 || y >= Main.maxTilesY) continue;
+
+                Tile acTile = Framing.GetTileSafely(x, y);
+                Tile belowTile = Framing.GetTileSafely(x, y + 1);
+
+                // is wood?
+                if (!IsTileTypeWood(acTile.TileType)) continue;
+                // unsupported?
+                if (belowTile.HasTile) continue;
+                // actuated?
+                if (acTile.CollisionType() != 1) continue;
+
+                _woodsBuffer.Add(new Point(x, y));
+            }
         }
 
         if (_woodsBuffer.Count == 0) return;

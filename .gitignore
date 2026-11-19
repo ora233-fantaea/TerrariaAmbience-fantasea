@@ -2,3 +2,12 @@ bin/
 obj/
 .vs
 .idea
+
+# 本地构建 / QA 现场（含指向游戏安装目录的 junction，体积数百 MB）
+.home/
+
+# 就地打包产物
+dist/
+
+# 工作区元数据
+.workbuddy/

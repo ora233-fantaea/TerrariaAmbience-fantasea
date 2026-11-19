@@ -138,12 +138,18 @@ public class FootstepHandler {
     public void Update() {
         if (Main.gameMenu) return;
         var fstepCfg = ModContent.GetInstance<FootstepsConfig>();
+        bool handleByDefault = fstepCfg.masterFootstepsVolume != 0;
 
+        // 两趟遍历合并成一趟，顺便去掉每 tick 分配的闭包。
         for (int i = 0; i < AllSounds.Count; i++) {
-            if (AllSounds[i] is null)
+            var sound = AllSounds[i];
+            if (sound is null)
                 continue;
-            AllSounds[i].VolumeMultiplier = fstepCfg.masterFootstepsVolume;
+
+            sound.VolumeMultiplier = fstepCfg.masterFootstepsVolume;
+            sound.HandleByDefault = handleByDefault;
         }
+
         var vol = Main.LocalPlayer.GetModPlayer<AmbientPlayer>().GetArmorStepVolume();
         Armor.LandVolume = vol;
         Armor.StepVolume = vol / 2;
@@ -153,10 +159,6 @@ public class FootstepHandler {
         Vanity.StepVolume = vol1 / 2;
 
         // TODO: make landing step volumes scale based on fall speed?
-        AllSounds.ForEach(x => {
-            if (x is null) return;
-            x.HandleByDefault = fstepCfg.masterFootstepsVolume != 0;
-        });
     }
 
     public Tile GetTileBelow(Entity ent) => Framing.GetTileSafely((int)ent.Bottom.X / 16, (int)(ent.Bottom.Y + 8) / 16);

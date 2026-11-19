@@ -7,6 +7,7 @@ using TerrariaAmbience.Helpers;
 using Terraria;
 using TerrariaAmbience.Core;
 using TerrariaAmbience.Content.AmbientAndMore;
+using TerrariaAmbience.Content.Players;
 
 namespace TerrariaAmbience.Common.Systems;
 
@@ -15,11 +16,28 @@ public class AudioLoopsSystem : ModSystem
     public static PositionalAudio2D[] grassCritters = new PositionalAudio2D[10];
     public static PositionalAudio2D[] owls = new PositionalAudio2D[4];
     public override void PreSaveAndQuit() {
-        TerrariaAmbience.DefaultAmbientHandler.RandomizeDawnTracks();
-        TerrariaAmbience.DefaultAmbientHandler.RandomizeDuskTracks();
+        // 专用服务器上 Initialize() 会提前返回，所有 ModAmbience 字段都是 null；
+        // 这里不守卫就会在每次「保存退出」时抛 NRE。
+        if (Main.dedServ) return;
+
+        TerrariaAmbience.DefaultAmbientHandler?.RandomizeDawnTracks();
+        TerrariaAmbience.DefaultAmbientHandler?.RandomizeDuskTracks();
     }
+
+    public override void OnWorldUnload() {
+        if (Main.dedServ) return;
+
+        // 退出世界后音频设备可能被重建，旧的实例与原生 voice 必须释放。
+        PositionalAudio2D.ReleaseAllInstances();
+        AmbientPlayer.DisposeIceSounds();
+    }
+
     public override void OnModLoad()
     {
+        // 服务端不需要这些音源。原先 GetAssetValue 作为实参先于构造函数求值，
+        // 导致专用服务器也把 14 个 wav 直接解压进内存（实测占用 25.9 MB）。
+        if (Main.dedServ)
+            return;
         grassCritters[0] = new PositionalAudio2D(GeneralHelpers.GetAssetValue<SoundEffect>(Mod, "Sounds/Custom/variousanimals/crickets1"), (5, 10), 0.25f, (0, 0)).WithName("QuietCricket");
         grassCritters[1] = new PositionalAudio2D(GeneralHelpers.GetAssetValue<SoundEffect>(Mod, "Sounds/Custom/variousanimals/crickets2"), (2, 3), 0.25f, (0, 0)).WithName("ClickCricket_0");
         grassCritters[2] = new PositionalAudio2D(GeneralHelpers.GetAssetValue<SoundEffect>(Mod, "Sounds/Custom/variousanimals/crickets3"), (3, 5), 0.25f, (0, 0)).WithName("ClickCricket_1");
@@ -49,6 +67,16 @@ public class AudioLoopsSystem : ModSystem
                 _attempts = 0;
                 return Vector2.Zero;
             }
+
+            // Main.tile 越界会直接抛异常；世界边缘附近必须先判界。
+            var tileX = (int)pos.X / 16;
+            var tileY = (int)pos.Y / 16;
+            if (!WorldGen.InWorld(tileX, tileY, 2) || !WorldGen.InWorld(tileX, tileY + 1, 2))
+            {
+                _reason = "OutOfWorld";
+                goto Retry;
+            }
+
             if (Collision.SolidCollision(pos, 1, 1))
             {
                 _reason = "TileSolid";
@@ -74,27 +102,24 @@ public class AudioLoopsSystem : ModSystem
     }
     public override void PostUpdateEverything()
     {
-        //Main.NewText("Tile: " + GeneralHelpers.GetTileNameAt(Main.MouseWorld / 16).ToLower());
-        //Main.NewText("Wall: " + GeneralHelpers.GetWallNameAt(Main.MouseWorld / 16).ToLower());
-        if (ModContent.GetInstance<AudioConfig>().dynamicAnimalSounds)
+        if (Main.dedServ) return;
+        if (!ModContent.GetInstance<AudioConfig>().dynamicAnimalSounds) return;
+        if (!Main.LocalPlayer.ZoneOverworldHeight) return;
+
+        // 找点本身要跑若干次碰撞查询，必须先过概率门再求值；
+        // 原先把属性写在 if 条件里，等于每 tick 无条件付一次代价。
+        if (Main.rand.NextBool(680))
         {
-            if (Main.LocalPlayer.ZoneOverworldHeight)
-            {
-                if (RandomPosNearPlayer != Vector2.Zero)
-                {
-                    int chance = Main.rand.Next(0, 680);
-                    int rand = Main.rand.Next(grassCritters.Length);
-                    if (chance == 0)
-                        grassCritters[rand]?.Play(RandomPosNearPlayer, 0.50f);
-                    if (!Main.dayTime)
-                    {
-                        int chance2 = Main.rand.Next(0, 750);
-                        int rand2 = Main.rand.Next(owls.Length);
-                        if (chance2 == 0)
-                            owls[rand2]?.Play(RandomPosNearPlayer, 0.75f);
-                    }
-                }
-            }
+            var pos = RandomPosNearPlayer;
+            if (pos != Vector2.Zero)
+                grassCritters[Main.rand.Next(grassCritters.Length)]?.Play(pos, 0.50f);
+        }
+
+        if (!Main.dayTime && Main.rand.NextBool(750))
+        {
+            var pos = RandomPosNearPlayer;
+            if (pos != Vector2.Zero)
+                owls[Main.rand.Next(owls.Length)]?.Play(pos, 0.75f);
         }
     }
 }

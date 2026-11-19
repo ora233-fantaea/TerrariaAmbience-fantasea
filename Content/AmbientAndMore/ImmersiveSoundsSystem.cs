@@ -13,19 +13,26 @@ using TerrariaAmbience.Common.Systems;
 namespace TerrariaAmbience.Content.AmbientAndMore;
 
 public class ImmersiveSoundsSystem : ModSystem {
+    // 每 tick new 两个 List 没有任何意义；复用静态缓冲，进入时清空。
+    static readonly List<Vector2> _eligibleThunderLocations = [];
+    static readonly List<Vector2> _eligibleHowlLocations = [];
+
     // get center and choose a random position above
     public static Vector2 RandFromCenter(float x, float dx, float y, float dy) => new(x + Main.rand.NextFloat(-dx, dx), y + Main.rand.NextFloat(-dy, dy));
     public override void PostUpdateEverything() {
         if (Main.netMode == NetmodeID.MultiplayerClient) return;
 
-        float rainingChanceNumber = 1f / Main.cloudAlpha;
-        // Main.NewText(Main.cloudAlpha + " : " + rainingChanceNumber);
-
-        float thunderChance = Main.rand.NextFloat(rainingChanceNumber);
+        // 原写法是 NextFloat(1f / Main.cloudAlpha)：无雨时 cloudAlpha == 0 → 参数为 +∞，
+        // 雷声概率恒为 0；有雨时又把概率量化成 1/cloudAlpha 的台阶。
+        // 等价且稳定的写法是直接按 0.005 * cloudAlpha 判定。
+        float thunderChance = Main.rand.NextFloat();
         float howlChance = Main.rand.NextFloat();
+        float thunderThreshold = 0.005f * MathHelper.Clamp(Main.cloudAlpha, 0f, 1f);
 
-        var eligibleThunderLocations = new List<Vector2>();
-        var eligibleHowlLocations = new List<Vector2>();
+        var eligibleThunderLocations = _eligibleThunderLocations;
+        var eligibleHowlLocations = _eligibleHowlLocations;
+        eligibleThunderLocations.Clear();
+        eligibleHowlLocations.Clear();
 
         foreach (var player in Main.ActivePlayers) {
             if (Main.raining && !player.ZoneSnow && player.ZoneOverworldHeight) {
@@ -37,7 +44,7 @@ public class ImmersiveSoundsSystem : ModSystem {
         }
         if (eligibleThunderLocations.Count > 0) {
             var randomThunderCenter = eligibleThunderLocations[Main.rand.Next(eligibleThunderLocations.Count)];
-            if (thunderChance < 0.005f) {
+            if (thunderChance < thunderThreshold) {
                 // y is at 100 tiles above worldSurface
                 // Main.NewText(Main.GameUpdateCount);
                 var origX = randomThunderCenter.X;
@@ -101,8 +108,6 @@ public class ImmersiveSoundsSystem : ModSystem {
                 }
             }
         }
-        eligibleHowlLocations.Clear();
-        eligibleThunderLocations.Clear();
     }
     public static void PlaySound(string path, Vector2 pos, float pitch = 0f) {
         var id = SoundEngine.PlaySound(new SoundStyle(path, 0, SoundType.Ambient), pos);

@@ -24,7 +24,10 @@ public class FilterHooks : ModSystem
 
 	static List<float> _oldLowPasses = [];
 	public override void PreSaveAndQuit() {
-		TerrariaAmbience.DefaultAmbientHandler.CampfireCrackleInstance.Stop();
+		// 服务端没有这些音源（Handler 在 dedServ 下不构造），必须判空。
+		if (Main.dedServ) return;
+
+		TerrariaAmbience.DefaultAmbientHandler?.CampfireCrackleInstance?.Stop();
 	}
 	public override void Load() {
 		On_ActiveSound.Play += ActiveSound_Play;
@@ -92,9 +95,18 @@ public class FilterHooks : ModSystem
     public override void PostUpdateEverything() {
         //var lisPos = SoundFilterSystem.ScreenListeningPosition;
 		//var lisVel = lisPos - _oldScreenPos;
-        for (int i = 0; i < dynamicSfxActiveSounds.Count; i++) {
+        // 倒序遍历，顺便清掉已经停止或被替换的条目。
+        // 原实现只 Add 不 Remove，长局后每 tick 要对历史上出现过的每个流式音源做一次完整线扫。
+        for (int i = dynamicSfxActiveSounds.Count - 1; i >= 0; i--) {
 			var sfx = dynamicSfxActiveSounds[i];
-			if (sfx.Sound is not DynamicSoundEffectInstance self) continue;
+
+			if (sfx?.Sound is not DynamicSoundEffectInstance self || self.IsDisposed || self.State == SoundState.Stopped) {
+				dynamicSfxActiveSounds.RemoveAt(i);
+				if (i < _oldLowPasses.Count)
+					_oldLowPasses.RemoveAt(i);
+				continue;
+			}
+
 			if (!sfx.Position.HasValue) continue;
 			var sndPos = sfx.Position.Value;
 			//var sndVel = sndPos - dynamicSfxPrevPos[i];
@@ -122,6 +134,11 @@ public class FilterHooks : ModSystem
 
                 // smooth approach: t is a small factor (e.g. 0.05)
                 float t = 0.4f * TerrariaAmbience.WorkaroundDeltaTime;
+
+                // 两个列表理论上同步增长，但剪枝后可能短暂错位，这里做一次对齐保护。
+                if (i >= _oldLowPasses.Count)
+                    _oldLowPasses.Add(0f);
+
                 float smoothed = MathHelper.Lerp(_oldLowPasses[i], target, t);
 
                 self.ApplyLowPassFilter(smoothed);
@@ -139,6 +156,8 @@ public class FilterHooks : ModSystem
     }
 
 	void ActiveSound_Play(On_ActiveSound.orig_Play orig, ActiveSound self) {
+		// orig(self) 内部已经调用了 Play，之后再 Play 一次会重启/重复提交缓冲。
+		// 这里只负责在播放后把滤波参数补上。
 		orig(self);
 
         var vol = self.Sound.Volume;
@@ -147,9 +166,7 @@ public class FilterHooks : ModSystem
         // self.Sound.Pause();
         ActiveSoundFilter(self, self.Sound);
 
-        // hacky but ok???
         self.Sound.Volume = vol;
-        self.Sound.Play();
     }
 
     static void ActiveSoundFilter(ActiveSound self, SoundEffectInstance sfx) {

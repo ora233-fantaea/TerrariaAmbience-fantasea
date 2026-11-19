@@ -23,7 +23,10 @@ public class SyncAmbienceSystem : ModSystem {
 
     static bool _didInitNextLoop;
     public override void PostUpdateEverything() {
-        if (!_didInitNextLoop) {
+        // 进入世界的第一帧初始化一次。
+        // 原实现把标志写成 !Main.gameMenu：主菜单里恒为 false，于是每帧都跑一遍
+        // Randomize*Tracks（每帧换曲、每帧重建音源），真正进世界时反而不执行。
+        if (!_didInitNextLoop && !Main.gameMenu) {
             if (!Main.dedServ) {
                 if (Main.dayTime) {
                     TerrariaAmbience.DefaultAmbientHandler?.RandomizeDuskTracks();
@@ -38,8 +41,13 @@ public class SyncAmbienceSystem : ModSystem {
                 CreateMorningDay(out var m, out var d);
                 SendAM(m, d);
             }
+
+            _didInitNextLoop = true;
         }
-        _didInitNextLoop = !Main.gameMenu;
+
+        // 回到菜单后重置，下次进世界再初始化一遍。
+        if (Main.gameMenu)
+            _didInitNextLoop = false;
 
         _curDay = Main.dayTime;
         CraftSounds.TimeSinceLastCraft++;

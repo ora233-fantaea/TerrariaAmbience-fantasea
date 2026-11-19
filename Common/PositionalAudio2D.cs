@@ -60,8 +60,52 @@ namespace TerrariaAmbience.Common
             Position = position;
             curLoopTimes = Main.rand.Next(minMaxLoops.Item1, minMaxLoops.Item2 + 1);
             curLoopTimes--;
-            _instancedAudio = Audio.CreateInstance();
+
+            // 旧实例必须显式 Stop + Dispose：FNA 的每个 SoundEffectInstance 都持有一个原生 voice，
+            // 只覆盖字段会让 voice 一直挂在音频子系统里，长局后表现为音源耗尽、整体变慢。
+            ReleaseInstance();
+
+            _instancedAudio = Audio?.CreateInstance();
             _instancedAudio?.Play();
+        }
+
+        void ReleaseInstance()
+        {
+            if (_instancedAudio is null)
+                return;
+
+            try
+            {
+                _instancedAudio.Stop();
+            }
+            catch
+            {
+                // 实例可能已被音频设备回收，Stop 失败不应影响后续重建。
+            }
+
+            _instancedAudio.Dispose();
+            _instancedAudio = null;
+        }
+
+        /// <summary>释放本对象持有的原生 voice，并从更新列表中移除。</summary>
+        public void Dispose()
+        {
+            ReleaseInstance();
+            Total2DPosAudios.Remove(this);
+        }
+
+        /// <summary>只释放原生 voice，保留对象本身以便下次进世界重新创建实例。</summary>
+        internal static void ReleaseAllInstances()
+        {
+            foreach (var audio in Total2DPosAudios)
+                audio.ReleaseInstance();
+        }
+
+        /// <summary>模组卸载时释放所有位置化音源，避免 voice 泄漏到下一次加载。</summary>
+        internal static void DisposeAll()
+        {
+            for (int i = Total2DPosAudios.Count - 1; i >= 0; i--)
+                Total2DPosAudios[i].Dispose();
         }
         internal static void Update()
         {
@@ -93,7 +137,7 @@ namespace TerrariaAmbience.Common
         }
         public override string ToString()
         {
-            return $"Name: {Name} | MaxLoopTimes: {maxLoopTimes} | CurLoopTime: {curLoopTimes} | Pos: ({(int)X}, {(int)Y}) | Vol: {_instancedAudio.Volume} | Pan: {_instancedAudio.Pan} | Delay: {_delay}";
+            return $"Name: {Name} | MaxLoopTimes: {maxLoopTimes} | CurLoopTime: {curLoopTimes} | Pos: ({(int)X}, {(int)Y}) | Vol: {_instancedAudio?.Volume ?? 0f} | Pan: {_instancedAudio?.Pan ?? 0f} | Delay: {_delay}";
         }
         public static float GetPanFromPosition(Vector2 position, float distance = 1f)
         {

@@ -126,10 +126,28 @@ public class SoundFilterSystem : ModSystem {
     }
     public static void UpdateReverbParams() {
         var time = (uint)ModContent.GetInstance<AudioConfig>().audioFiltersRefreshTime;
+        if (time == 0)
+            time = 1;
+
         if (Main.GameUpdateCount % time != 0) return;
 
-        LatestParams = GenerateAudioFilters(FloodFillSystem.PlayerRoom);
+        // 玩家没有跨 tile、房间规模也没变时，结果与上一轮相同。
+        // 开 raycast 时每轮要为房间内每个 tile 走一条 Bresenham 线，这个判重省掉了绝大多数重复计算。
+        var listenerTile = ScreenListeningPosition.ToTileCoordinates();
+        var room = FloodFillSystem.PlayerRoom;
+        int tileCount = room.Tiles.Count;
+
+        if (listenerTile == _lastReverbTile && tileCount == _lastReverbTileCount)
+            return;
+
+        _lastReverbTile = listenerTile;
+        _lastReverbTileCount = tileCount;
+
+        LatestParams = GenerateAudioFilters(room);
     }
+
+    static Point _lastReverbTile;
+    static int _lastReverbTileCount = -1;
 
     // compute reverb properties after all mods have loaded their content
     public override void PostAddRecipes() {
@@ -366,6 +384,17 @@ public class SoundFilterSystem : ModSystem {
 
         var occlusionFactor = 50f;
 
+        // 起点与终点相同时没有任何遮挡可言：TileLine 连一次回调都不会进，
+        // 原实现会白跑一趟并按 numBlockingTiles = 0 返回 1.0（等于没开）。
+        // 全局参数就是这种情况（音源位置被传成听者位置），这里直接短路。
+        var fromTile = goalPos.ToTileCoordinates();
+        var toTile = (position + offset).ToTileCoordinates();
+
+        if (fromTile == toTile) {
+            enabled = false;
+            return 1f;
+        }
+
         // experimental pathfinding approach
         /*var start = position.ToTileCoordinates();
         var path = new AStarPath(start, goalPos.ToTileCoordinates());
@@ -387,8 +416,7 @@ public class SoundFilterSystem : ModSystem {
     // mult by 2 since 2 feet per block
     tileline:*/
         int numBlockingTiles = 0;
-        TileLine(goalPos.ToTileCoordinates(),
-            (position + offset).ToTileCoordinates(),
+        TileLine(fromTile, toTile,
             (x, y, t) => {
                 var ts = Main.tileSolid[t.TileType];
                 var tst = Main.tileSolidTop[t.TileType];

@@ -42,7 +42,9 @@ public class SlimeSounds : GlobalNPC {
         if (vel.Y == 0 && oldVelocity.Y != 0) {
             int oneOrTwo = Main.rand.Next(1, 3);
             soundStyle = new SoundStyle($"TerrariaAmbience/Sounds/Custom/npcs/slimeland{oneOrTwo}") {
-                Volume = MathHelper.Clamp(oldVelocity.Y / 2.5f, 0f, 1f),
+                // velocity.Y 是带符号的，落地时通常为正、但被弹起时可能为负；
+                // 用带符号值钳到 [0,1] 会让一部分落地完全静音。
+                Volume = MathHelper.Clamp(Math.Abs(oldVelocity.Y) / 2.5f, 0f, 1f),
                 Pitch = GeneralHelpers.NaturalPitchVariance
             };
             soundStyleGiven = true;
@@ -69,6 +71,8 @@ public class SplashingSounds : GlobalNPC {
     public override bool InstancePerEntity => true;
     bool _wet;
     public override void PostAI(NPC npc) {
+        if (Main.dedServ) return;
+
         var cfg3 = ModContent.GetInstance<AudioConfig>();
 
         if (cfg3.newSplashSounds)
@@ -80,16 +84,18 @@ public class SplashingSounds : GlobalNPC {
         bool justUnwet = !npc.wet && _wet;
 
         if (justWet || justUnwet) {
-            var vel = npc.velocity.Y;
+            // 带符号的 velocity.Y 会让「跃出水面」这一帧算出负音量。
+            var vel = MathF.Abs(npc.velocity.Y);
 
             const float loud_thresh = 10f;
 
             var soundSplash = new SoundStyle($"TerrariaAmbience/Sounds/Custom/ambient/environment/liquid/entity_splash_{(vel >= loud_thresh ? "heavy" : "light")}");
 
-            if (vel < 10f)
-                soundSplash.Volume = vel / loud_thresh / 4;
-            if (vel == 0)
+            // 先判 0 再判区间：否则 vel == 0 会先被写成 0 再被覆盖，逻辑顺序是反的。
+            if (vel == 0f)
                 soundSplash.Volume = 0.1f;
+            else if (vel < loud_thresh)
+                soundSplash.Volume = vel / loud_thresh / 4f;
 
             SoundEngine.PlaySound(soundSplash, npc.position);
         }

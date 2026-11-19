@@ -90,6 +90,9 @@ public class CraftSounds : GlobalItem {
         Anvils,
         Alchemy,
         TinkerStations,
+        // Magical 原先只在 CategoryToDir 里，不在这个集合中，
+        // 于是水晶球合成会被 wasValidStation 直接挡掉，永远没有声音。
+        Magical,
         // FleshyStations // no noise for this yet.
     ];
     public static Dictionary<List<int>, string> CategoryToDir = new() {
@@ -125,11 +128,14 @@ public class CraftSounds : GlobalItem {
         var aPlayer = player.GetModPlayer<AmbientPlayer>();
         // var pket = mod.GetPacket();
         var wasValidStation = AllCategories.Any(x => x.Intersect(recipe.requiredTile).Any());
+
+        // 必须先读取再清零：原先把 TimeSinceLastCraft = 0 写在判断之前，
+        // 导致 `> 60` 变成死代码，连续合成同一物品只响一次。
+        int sinceLastCraft = TimeSinceLastCraft;
         TimeSinceLastCraft = 0;
-        
+
         // a second is probably acceptable.
-        // why tf is "TimeSinceLastCraft" shitting its pants? we will never know. ryan out
-        if (LastCraftedConsumable != item.type || TimeSinceLastCraft > 60) {
+        if (LastCraftedConsumable != item.type || sinceLastCraft > 60) {
             if (wasValidStation) {
                 var audioCfg = ModContent.GetInstance<AudioConfig>();
                 var volScale = audioCfg.craftingSoundsVolume;
@@ -137,7 +143,7 @@ public class CraftSounds : GlobalItem {
 
                 var pair = CategoryToDir.FirstOrDefault(x => x.Key.Intersect(recipe.requiredTile).Any());
 
-                if (CategoryToDir.TryGetValue(pair.Key, out string value)) {
+                if (pair.Key is not null && CategoryToDir.TryGetValue(pair.Key, out string value)) {
                     dir = value;
                 }
 

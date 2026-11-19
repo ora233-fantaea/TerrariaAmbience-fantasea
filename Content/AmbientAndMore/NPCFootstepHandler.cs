@@ -36,17 +36,21 @@ public class NPCFootstepHandler : GlobalNPC {
         for (int i = 0; i < NPCID.Search.Count; i++) {
             var name = NPCID.Search.GetName(i);
             if (name.Contains("zombie", StringComparison.CurrentCultureIgnoreCase)) {
-                if (ContentSamples.NpcsByNetId[i].frame.Height < 150) {
+                // 原判断是 ContentSamples.NpcsByNetId[i].frame.Height < 150，
+                // 但样本 NPC 只跑过 SetDefaults、没跑 FindFrame，frame 恒为 0 —— 条件恒真，等于完全没过滤。
+                // 这里改用 SetDefaults 一定会赋值的 height：超过 100px 视为大型变体，不注册脚步。
+                var sample = ContentSamples.NpcsByNetId[i];
+                if (sample.height is > 0 and <= 100)
                     zombieIds.Add(i);
-                }
             }
         }
         // zombies arent spawning now for some reason?
         AddZombies([.. zombieIds], 0.2f);
     }
-    public static void AddGeneric(int type, float vol) => NPCIDToStepFrame.Add(type, ([5, 12], vol));
+    // 用索引器而不是 Add：类型重复时 Add 会抛 ArgumentException，直接让加载失败。
+    public static void AddGeneric(int type, float vol) => NPCIDToStepFrame[type] = ([5, 12], vol);
     public static void AddGenerics(int[] types, float vol) => Array.ForEach(types, x => AddGeneric(x, vol));
-    public static void AddZombie(int type, float vol) => NPCIDToStepFrame.Add(type, ([0], vol));
+    public static void AddZombie(int type, float vol) => NPCIDToStepFrame[type] = ([0], vol);
     public static void AddZombies(int[] types, float vol) => Array.ForEach(types, x => AddZombie(x, vol));
     public override void PostAI(NPC npc) {
         var cfg = ModContent.GetInstance<FootstepsConfig>();

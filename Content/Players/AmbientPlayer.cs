@@ -22,7 +22,27 @@ public class AmbientPlayer : ModPlayer {
 
     public static SoundEffectInstance soundSlippyRoughInst;
     public static SoundEffectInstance soundSlippySmoothInst;
-    bool _areSoundsInitialized;
+    // 音源是静态共享的，初始化标志也必须是静态的：否则每进一次世界都会重建一遍并丢弃旧实例。
+    static bool _areSoundsInitialized;
+    static bool _iceSoundsFailed;
+
+    /// <summary>释放静态滑行音源。世界卸载与模组卸载时都必须调用。</summary>
+    public static void DisposeIceSounds() {
+        try {
+            soundSlippyRoughInst?.Stop();
+            soundSlippySmoothInst?.Stop();
+        }
+        catch {
+            // 设备已回收时 Stop 可能抛异常，忽略即可。
+        }
+
+        soundSlippyRoughInst?.Dispose();
+        soundSlippySmoothInst?.Dispose();
+        soundSlippyRoughInst = null;
+        soundSlippySmoothInst = null;
+        _areSoundsInitialized = false;
+        _iceSoundsFailed = false;
+    }
 
     internal int timerUntilValidChestStateChange;
 
@@ -30,6 +50,25 @@ public class AmbientPlayer : ModPlayer {
     int chestStateOld; // Same as above.
 
     public static HashSet<int> NonArmoryArmors = [];
+
+    // 篝火扫描结果缓存：100×100 的方框每 tick 重扫一次没有意义，
+    // 玩家不跨 tile 时结果完全相同，跨 tile 或满 30 tick 才重算。
+    static HashSet<Point> _campfireCache;
+    static Point _campfireCacheTile;
+    static int _campfireCacheAge;
+
+    static HashSet<Point> GetCampfireCache(Vector2 center) {
+        var tile = center.ToTileCoordinates();
+        _campfireCacheAge++;
+
+        if (_campfireCache is null || tile != _campfireCacheTile || _campfireCacheAge >= 30) {
+            _campfireCache = [.. CampfireDetection.GetNearbyCampfires(center, 50)];
+            _campfireCacheTile = tile;
+            _campfireCacheAge = 0;
+        }
+
+        return _campfireCache;
+    }
 
     public static void DetermineNonArmoryArmors() {
         for (int i = 0; i < ItemID.Search.Count; i++) {
@@ -95,38 +134,49 @@ public class AmbientPlayer : ModPlayer {
             chestStateOld = chestStateNew;
             return;
         }
-        if (chestStateNew < -1) return;
 
-        var chestOpen = (chestStateNew != chestStateOld) && chestStateNew > -1;
-        var chestClose = (chestStateNew != chestStateOld) && chestStateNew == -1;
-        var chestChange = (chestStateNew != chestStateOld) && chestStateOld > -1;
+        int oldState = chestStateOld;
+        // 无论后续是否发声都要推进状态，否则猪猪银行/保险箱这类负索引会让状态永远卡住。
+        chestStateOld = chestStateNew;
+
+        if (chestStateNew == oldState)
+            return;
 
         const float vol_scale_open = 0.15f;
         const float vol_scale_close = 0.3f;
-        if (chestOpen) {
-            var chest = Main.chest[chestStateNew];
-            // + 1 because that's the center of the container. i dont think any chests have any different dimensions
-            var pos = new Vector2(chest.x + 1, chest.y + 1) * 16;
-            var ss = new SoundStyle("TerrariaAmbience/Sounds/Custom/ambient/player/chest_open").WithVolumeScale(vol_scale_open).WithPitchOffset(GeneralHelpers.NaturalPitchVarianceLesser);
-            GeneralHelpers.PlaySound(ss, pos);
-        }
-        else if (chestClose) {
-            var chest = Main.chest[chestStateOld];
-            var pos = new Vector2(chest.x + 1, chest.y + 1) * 16;
-            var ss = new SoundStyle("TerrariaAmbience/Sounds/Custom/ambient/player/chest_close").WithVolumeScale(vol_scale_close).WithPitchOffset(GeneralHelpers.NaturalPitchVarianceLesser);
-            GeneralHelpers.PlaySound(ss, pos);
+
+        // 关闭容器、或从一个容器直接切到另一个容器时，旧容器的关闭音只放一次。
+        if (TryGetChestCenter(oldState, out var closePos)) {
+            var close = new SoundStyle("TerrariaAmbience/Sounds/Custom/ambient/player/chest_close").WithVolumeScale(vol_scale_close).WithPitchOffset(GeneralHelpers.NaturalPitchVarianceLesser);
+            GeneralHelpers.PlaySound(close, closePos);
         }
 
-        if (chestChange) {
-            var chest = Main.chest[chestStateOld];
-            var pos = new Vector2(chest.x + 1, chest.y + 1) * 16;
-            var ss = new SoundStyle("TerrariaAmbience/Sounds/Custom/ambient/player/chest_close").WithVolumeScale(vol_scale_close).WithPitchOffset(GeneralHelpers.NaturalPitchVarianceLesser);
-            GeneralHelpers.PlaySound(ss, pos);
+        if (TryGetChestCenter(chestStateNew, out var openPos)) {
+            var open = new SoundStyle("TerrariaAmbience/Sounds/Custom/ambient/player/chest_open").WithVolumeScale(vol_scale_open).WithPitchOffset(GeneralHelpers.NaturalPitchVarianceLesser);
+            GeneralHelpers.PlaySound(open, openPos);
         }
+    }
 
-        chestStateOld = chestStateNew;
+    /// <summary>把箱子索引安全地换算成世界坐标；索引越界或对应箱子为空时返回 false。</summary>
+    static bool TryGetChestCenter(int index, out Vector2 center) {
+        center = default;
+
+        if (index < 0 || index >= Main.chest.Length)
+            return false;
+
+        var chest = Main.chest[index];
+        if (chest is null)
+            return false;
+
+        // +1 是因为那是容器的中心格；目前没有尺寸不同的箱子。
+        center = new Vector2(chest.x + 1, chest.y + 1) * 16;
+        return true;
     }
     void HandleWetSteps() {
+        // 每 tick 都要重新判定：原先只在找到实心块时置 true、从不置 false，
+        // 导致玩家走过一次屋檐/洞穴下方后，雨天湿地脚步声永久失效。
+        HasTilesAbove = false;
+
         // This is a pretty niche finding for tiles above said player
         // can obviously be optimized... fml
 
@@ -146,6 +196,7 @@ public class AmbientPlayer : ModPlayer {
             if (!tile.HasTile || !Main.tileSolid[tile.TileType]) continue;
 
             HasTilesAbove = true;
+            break;
         }
     }
     public override void PostUpdate() {
@@ -166,7 +217,7 @@ public class AmbientPlayer : ModPlayer {
         var audioCfg = ModContent.GetInstance<AudioConfig>();
         // this is my fix
         if (audioCfg.campfireSounds) {
-            var campfires = CampfireDetection.GetNearbyCampfires(Player.Center, 50);
+            var campfires = GetCampfireCache(Player.Center);
             float closestDist = float.MaxValue;
             var closest = Vector2.Zero;
 
@@ -193,10 +244,12 @@ public class AmbientPlayer : ModPlayer {
             cracklePan = MathHelper.Clamp(campDist / maxDist * (useLeftPan ? -1 : 1) / 2, -1, 1);
             crackleVolume = MathHelper.Clamp(1f - campDist / maxDist * campfireVolumeScalar, 0, 1);
 
-            TerrariaAmbience.DefaultAmbientHandler.CampfireCrackleInstance.Volume = crackleVolume;
-
-            // pan does not currently work since it's stereo instead of mono
-            TerrariaAmbience.DefaultAmbientHandler.CampfireCrackleInstance.Pan = cracklePan;
+            var crackle = TerrariaAmbience.DefaultAmbientHandler?.CampfireCrackleInstance;
+            if (crackle is not null) {
+                crackle.Volume = crackleVolume;
+                // pan does not currently work since it's stereo instead of mono
+                crackle.Pan = cracklePan;
+            }
         }
     }
     /// <summary>
@@ -256,7 +309,8 @@ public class AmbientPlayer : ModPlayer {
             if (!head.vanity) {
                 if (!isNotMetallic(head)) {
                     if (!hasVanityCovering(GeneralHelpers.IDs.ArmorSlotID.HeadSlot)) {
-                        determinedValue *= 1.25f + 0.05f;
+                        // 原先写成 *= 1.3f，但初值是 0，头盔加成永远为 0；这里按加法语义修正。
+                        determinedValue += 0.3f;
                     }
                 }
             }
@@ -293,7 +347,8 @@ public class AmbientPlayer : ModPlayer {
         // 10 <= x <= 12 == vanity armor
         if (hasHeadArmor) {
             if (head.vanity) {
-                determinedValue *= 1.25f + 0.1f;
+                // 同 GetArmorStepVolume：乘在 0 上恒为 0，改为加法。
+                determinedValue += 0.35f;
             }
         }
         if (hasChestArmor) {
@@ -341,42 +396,63 @@ public class AmbientPlayer : ModPlayer {
     }
 
     public void HandleIceScraping() {
-        // if (Player.whoAmI != Main.myPlayer) return;
-        // ^ eventually add support for hearing other people
-        if (!Main.dedServ) {
-            if (!_areSoundsInitialized) {
+        if (Main.dedServ) return;
+
+        // 这两个音源是静态共享的，只有本地玩家的状态可以驱动它；
+        // 否则多人游戏里会被其他玩家的 slippy 状态覆盖。
+        if (Player.whoAmI != Main.myPlayer) return;
+
+        if (!_areSoundsInitialized) {
+            if (_iceSoundsFailed) return;
+
+            try {
                 soundSlippyRoughInst = Mod.Assets.Request<SoundEffect>("Sounds/Custom/ambient/player/ice_slide_rough", ReLogic.Content.AssetRequestMode.ImmediateLoad).Value.CreateInstance();
-                soundSlippyRoughInst.IsLooped = true;
-                soundSlippyRoughInst?.Play();
-                soundSlippyRoughInst.Volume = 0f;
                 soundSlippySmoothInst = Mod.Assets.Request<SoundEffect>("Sounds/Custom/ambient/player/ice_slide_smooth", ReLogic.Content.AssetRequestMode.ImmediateLoad).Value.CreateInstance();
-                soundSlippySmoothInst.IsLooped = true;
-                soundSlippySmoothInst?.Play();
-                soundSlippySmoothInst.Volume = 0f;
-                _areSoundsInitialized = true;
             }
-            bool slippyRough = Player.slippy;
-            bool slippySmooth = Player.slippy2;
+            catch (Exception e) {
+                _iceSoundsFailed = true;
+                DisposeIceSounds();
+                _iceSoundsFailed = true;
+                Mod.Logger.Warn($"TerrariaAmbience: failed to create ice slide sound instances: {e.Message}");
+                return;
+            }
 
-            if (slippyRough) {
-                soundSlippyRoughInst.Volume = Math.Abs(Player.velocity.X / 50f) * GeneralHelpers.GetVolumeFromPosition(Player.Bottom) * Main.soundVolume;
-                soundSlippyRoughInst.Pan = GeneralHelpers.GetPanFromPosition(Player.Bottom);
+            if (soundSlippyRoughInst is null || soundSlippySmoothInst is null) {
+                _iceSoundsFailed = true;
+                DisposeIceSounds();
+                _iceSoundsFailed = true;
+                Mod.Logger.Warn("TerrariaAmbience: ice slide sound instances unavailable; skipping ice scraping sounds.");
+                return;
             }
-            else
-                soundSlippyRoughInst.Volume -= 0.01f;
-            if (slippySmooth) {
-                soundSlippySmoothInst.Volume = Math.Abs(Player.velocity.X / 50f) * GeneralHelpers.GetVolumeFromPosition(Player.Bottom) * Main.soundVolume;
-                soundSlippySmoothInst.Pan = GeneralHelpers.GetPanFromPosition(Player.Bottom);
-            }
-            else
-                soundSlippySmoothInst.Volume -= 0.01f;
-            soundSlippyRoughInst.Volume = MathHelper.Clamp(soundSlippyRoughInst.Volume, 0f, 0.5f);
-            soundSlippySmoothInst.Volume = MathHelper.Clamp(soundSlippySmoothInst.Volume, 0f, 0.5f);
 
-            soundSlippyRoughInst?.ApplyReverb(SoundFilterSystem.LatestParams);
-            //soundSlippyRoughInst.ApplyLowPassFilter(SoundFilterSystem.LatestParams.LowPassIntensity);
-            soundSlippySmoothInst?.ApplyReverb(SoundFilterSystem.LatestParams);
-            //soundSlippySmoothInst.ApplyLowPassFilter(SoundFilterSystem.LatestParams.BandPassIntensity);
+            soundSlippyRoughInst.IsLooped = true;
+            soundSlippyRoughInst.Play();
+            soundSlippyRoughInst.Volume = 0f;
+            soundSlippySmoothInst.IsLooped = true;
+            soundSlippySmoothInst.Play();
+            soundSlippySmoothInst.Volume = 0f;
+            _areSoundsInitialized = true;
         }
+
+        bool slippyRough = Player.slippy;
+        bool slippySmooth = Player.slippy2;
+
+        if (slippyRough) {
+            soundSlippyRoughInst.Volume = Math.Abs(Player.velocity.X / 50f) * GeneralHelpers.GetVolumeFromPosition(Player.Bottom) * Main.soundVolume;
+            soundSlippyRoughInst.Pan = GeneralHelpers.GetPanFromPosition(Player.Bottom);
+        }
+        else
+            soundSlippyRoughInst.Volume -= 0.01f;
+        if (slippySmooth) {
+            soundSlippySmoothInst.Volume = Math.Abs(Player.velocity.X / 50f) * GeneralHelpers.GetVolumeFromPosition(Player.Bottom) * Main.soundVolume;
+            soundSlippySmoothInst.Pan = GeneralHelpers.GetPanFromPosition(Player.Bottom);
+        }
+        else
+            soundSlippySmoothInst.Volume -= 0.01f;
+        soundSlippyRoughInst.Volume = MathHelper.Clamp(soundSlippyRoughInst.Volume, 0f, 0.5f);
+        soundSlippySmoothInst.Volume = MathHelper.Clamp(soundSlippySmoothInst.Volume, 0f, 0.5f);
+
+        soundSlippyRoughInst.ApplyReverb(SoundFilterSystem.LatestParams);
+        soundSlippySmoothInst.ApplyReverb(SoundFilterSystem.LatestParams);
     }
 }

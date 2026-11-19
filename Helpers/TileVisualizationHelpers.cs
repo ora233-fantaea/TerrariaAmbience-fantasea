@@ -44,6 +44,13 @@ public class TileVisualizationHelpers : ModSystem {
         TileVisualizations.Clear();
     }
     public static Color ToColor(Vector3 vec) => new((int)Math.Round(vec.X * 255), (int)Math.Round(vec.Y * 255), (int)Math.Round(vec.Z * 255));
+
+    public override void Unload() {
+        // 1x1 调试纹理不会由 tML 管理，卸载时要自己释放。
+        DebugPixel?.Dispose();
+        DebugPixel = null;
+        TileVisualizations.Clear();
+    }
     public override void PostUpdateEverything() {
         if (Main.mapFullscreen)
             TileVisualizations.Clear();
@@ -66,7 +73,16 @@ public class TileVisualizationHelpers : ModSystem {
         if (Main.keyState.IsKeyDown(Keys.F5) && Main.oldKeyState.IsKeyUp(Keys.F5))
             genCfg.debugInterface = !genCfg.debugInterface;
 
-        if (!genCfg.debugInterface || !aaCfg.advancedReverbCalculation || !aaCfg.isReverbEnabled && _visVis > 0) return;
+        // 条件不满足时必须清空：PostDrawTiles 在 _visVis == 0 时直接 return，
+        // 原实现会让 TileVisualizations 在关闭调试后继续只增不减。
+        bool skipCollection = !genCfg.debugInterface
+            || !aaCfg.advancedReverbCalculation
+            || (!aaCfg.isReverbEnabled && _visVis > 0);
+
+        if (skipCollection) {
+            TileVisualizations.Clear();
+            return;
+        }
 
         var tilePosList = FloodFillSystem.PlayerRoom.Tiles;
         bool isRaycastEnabled = aaCfg.reverbUsingRaycasting;

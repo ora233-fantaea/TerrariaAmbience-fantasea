@@ -54,6 +54,8 @@ public class FAudioReverbController {
     }
 
     static bool _init;
+    static FAudio.FAudioVoiceSends _reverbSends;
+    static IntPtr _reverbSendPtr;
 
     // yadda yadda... create more instances somehow. too lazy, too bad.
     public unsafe static void RvInit() {
@@ -90,7 +92,33 @@ public class FAudioReverbController {
 
         FNAPlatform.Free(reverbChain->pEffectDescriptors);
         FNAPlatform.Free(chainPtr);
+
+        // 所有音源的发送目标都是「主输出 + 混响」这一对，只分配一次并复用。
+        // 原实现在每个音源首次挂混响时都 Malloc 一次且永不释放。
+        _reverbSendPtr = FNAPlatform.Malloc(2 * MarshalHelper.SizeOf<FAudio.FAudioSendDescriptor>());
+        _reverbSends.SendCount = 2;
+        _reverbSends.pSends = _reverbSendPtr;
+
+        FAudio.FAudioSendDescriptor* sendDesc = (FAudio.FAudioSendDescriptor*)_reverbSendPtr;
+        sendDesc[0].Flags = 0;
+        sendDesc[0].pOutputVoice = device.MasterVoice;
+        sendDesc[1].Flags = 0;
+        sendDesc[1].pOutputVoice = device.ReverbVoice;
     }
+
+    /// <summary>释放本类持有的原生内存。必须在所有音源已 Dispose 之后调用。</summary>
+    public static void Shutdown() {
+        if (_reverbSendPtr != IntPtr.Zero) {
+            FNAPlatform.Free(_reverbSendPtr);
+            _reverbSendPtr = IntPtr.Zero;
+        }
+
+        _reverbSends = default;
+        // 不主动销毁 ReverbVoice：它由 FAudio 设备持有，FNA 关闭设备时会一并释放；
+        // 在仍有音源向它发送时提前销毁会踩空指针。标志重置后下次加载会重建。
+        _init = false;
+    }
+
     unsafe static void ReverbAttach(IntPtr handle, FAudio.FAudioFXReverbParameters param) {
         var device = SoundEffect.Device();
 
@@ -100,16 +128,7 @@ public class FAudioReverbController {
         // effectIndex could be useful for tracking multiple reverbs
         FAudio.FAudioVoice_SetEffectParameters(device.ReverbVoice, 0, (IntPtr)rvbParamsPtr, (uint)MarshalHelper.SizeOf<FAudio.FAudioFXReverbParameters>(), 0);
 
-        device.reverbSends = new FAudio.FAudioVoiceSends();
-        device.reverbSends.SendCount = 2;
-        device.reverbSends.pSends = FNAPlatform.Malloc(2 * MarshalHelper.SizeOf<FAudio.FAudioSendDescriptor>());
-        FAudio.FAudioSendDescriptor* sendDesc = (FAudio.FAudioSendDescriptor*)device.reverbSends.pSends;
-        sendDesc[0].Flags = 0;
-        sendDesc[0].pOutputVoice = device.MasterVoice;
-        sendDesc[1].Flags = 0;
-        sendDesc[1].pOutputVoice = device.ReverbVoice;
-
-        // Oh hey here's where we actually attach it
-        FAudio.FAudioVoice_SetOutputVoices(handle, ref device.reverbSends);
+        // 复用 RvInit 里建好的发送描述符，不再逐音源分配。
+        FAudio.FAudioVoice_SetOutputVoices(handle, ref _reverbSends);
     }
 }

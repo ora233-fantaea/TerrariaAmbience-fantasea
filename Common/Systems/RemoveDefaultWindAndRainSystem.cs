@@ -17,7 +17,8 @@ public class RemoveDefaultWindAndRainSystem : ModSystem {
     public override void Load() {
         if (Main.dedServ) return;
         // delete those losers 😈
-        var lAudioSystem = Main.audioSystem as LegacyAudioSystem;
+        if (Main.audioSystem is not LegacyAudioSystem lAudioSystem) return;
+        if (lAudioSystem.AudioTracks is null || lAudioSystem.AudioTracks.Length <= 45) return;
 
         _audioTrack_28 = lAudioSystem.AudioTracks[28];
         _audioTrack_45 = lAudioSystem.AudioTracks[45];
@@ -27,8 +28,12 @@ public class RemoveDefaultWindAndRainSystem : ModSystem {
         On_LegacyAudioSystem.UpdateAmbientCueState += IgnoreWindAndRain_2;
     }
     public override void Unload() {
+        // 服务端在 Load 里已经早退，这里若不守卫就会对 null 的 audioSystem 解引用。
+        if (Main.dedServ) return;
+
         // replace these losers 💀
-        var lAudioSystem = Main.audioSystem as LegacyAudioSystem;
+        if (Main.audioSystem is not LegacyAudioSystem lAudioSystem) return;
+        if (lAudioSystem.AudioTracks is null || lAudioSystem.AudioTracks.Length <= 45) return;
 
         lAudioSystem.AudioTracks[28] = _audioTrack_28;
         lAudioSystem.AudioTracks[45] = _audioTrack_45;
@@ -56,7 +61,10 @@ public class RemoveDefaultWindAndRainSystem : ModSystem {
 
         if (Main.gameMenu)
             return;
-        var lAudioSystem = Main.audioSystem as LegacyAudioSystem;
+        if (Main.audioSystem is not LegacyAudioSystem lAudioSystem)
+            return;
+        if (lAudioSystem.AudioTracks is null || lAudioSystem.AudioTracks.Length <= 45)
+            return;
 
         // rain cue
         lAudioSystem.AudioTracks[28] = null;

@@ -100,17 +100,17 @@ public class AmbientHandler {
             return IsStrictlySurface;
         });
 
-        ForestMorning = new(mod, AmbientPath + $"biome/forest/morning_{Main.rand.Next(1, NUM_MORNING_AMBIENCE)}", "ForestMorning", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
+        ForestMorning = new(mod, AmbientPath + $"biome/forest/morning_{Main.rand.Next(1, NUM_MORNING_AMBIENCE + 1)}", "ForestMorning", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
             return InAForest;
         });
-        ForestDay = new(mod, AmbientPath + $"biome/forest/day_{Main.rand.Next(1, NUM_DAY_AMBIENCE)}", "ForestDay", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
+        ForestDay = new(mod, AmbientPath + $"biome/forest/day_{Main.rand.Next(1, NUM_DAY_AMBIENCE + 1)}", "ForestDay", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
             return InAForest && Main.dayTime;
         });
-        ForestEvening = new(mod, AmbientPath + $"biome/forest/evening_{Main.rand.Next(1, NUM_EVENING_AMBIENCE)}", "ForestEvening", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
+        ForestEvening = new(mod, AmbientPath + $"biome/forest/evening_{Main.rand.Next(1, NUM_EVENING_AMBIENCE + 1)}", "ForestEvening", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
             var player = Main.LocalPlayer;
             return InAForest;
         });
-        ForestNight = new(mod, AmbientPath + $"biome/forest/night_{Main.rand.Next(1, NUM_NIGHT_AMBIENCE)}", "ForestNight", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
+        ForestNight = new(mod, AmbientPath + $"biome/forest/night_{Main.rand.Next(1, NUM_NIGHT_AMBIENCE + 1)}", "ForestNight", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
             return InAForest && !Main.dayTime;
         });
 
@@ -161,7 +161,8 @@ public class AmbientHandler {
         });
         Hell = new(mod, AmbientPath + "biome/hell/rumbles", "Hell", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
             // save some resources by only controlling this if they're in the underworld
-            return Main.LocalPlayer.position.Y > Main.rockLayer;
+            // Main.rockLayer 的单位是 tile，player.position.Y 是像素，原先直接比较等于恒为真。
+            return Main.LocalPlayer.position.Y > Main.rockLayer * 16;
         });
         Underwater = new(mod, AmbientPath + "environment/underwater_loop", "Underwater", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
             var player = Main.LocalPlayer;
@@ -283,7 +284,11 @@ public class AmbientHandler {
                 amb.MaxVolume = 0f; // no ambience in the main menu.
             }
 
-            amb.SoundInstance.Pitch = 0f;
+            // SoundInstance 在资源缺失/加载失败时会是 null（API 的 ChangeTrack 明确会这么赋值），
+            // 这里每 tick 无条件解引用会让整个 Main.Update 每帧抛一次 NRE。
+            var instance = amb.SoundInstance;
+            if (instance is not null)
+                instance.Pitch = 0f;
 
             if (!isHarshOk) continue;
             TransitionHarshness = harshness;
@@ -380,14 +385,23 @@ public class AmbientHandler {
 
         // idk how to avoid looping again
         var pl = Main.LocalPlayer.GetModPlayer<AmbientPlayer>();
-        Ambiences.ForEach(x => {
-            x.MaxVolume *= pl.InRoomAmbientMultiplier;
-            x.MaxVolume *= ModContent.GetInstance<AmbientConfig>().overallVolume;
-            if (Underwater.AreConditionsMet) {
-                x.SoundInstance.Pitch -= -0.05f;
-                x.MaxVolume *= 0.1f;
-            }
-        });
+        var overallVolume = ModContent.GetInstance<AmbientConfig>().overallVolume;
+        bool isUnderwater = Underwater.AreConditionsMet;
+
+        for (int i = 0; i < Ambiences.Count; i++) {
+            var amb = Ambiences[i];
+            amb.MaxVolume *= pl.InRoomAmbientMultiplier * overallVolume;
+
+            if (!isUnderwater) continue;
+
+            // 原写法是 Pitch -= -0.05f，等价于 +0.05（水下反而升调），
+            // 而且它依赖上一轮循环把 Pitch 归零才不至于逐帧累加。
+            var instance = amb.SoundInstance;
+            if (instance is not null)
+                instance.Pitch = -0.05f;
+
+            amb.MaxVolume *= 0.1f;
+        }
     }
 }
 public static class AmbienceID {

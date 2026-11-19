@@ -255,11 +255,10 @@ public class GeneralHelpers {
         return rectHoverable;
     }
     public static bool CheckPlayerArmorSlot(Player player, int slot, out Item item) {
-        item = new Item();
-        if (!player.armor[slot].IsAir)
-            item = player.armor[slot];
-
-        return !player.armor[slot].IsAir;
+        // 原先每次都 new Item()，而该方法每 tick 会被调用 6 次（护甲与时装各 3 个槽位）。
+        // Item 是引用类型，直接取出槽位即可，无需分配。
+        item = player.armor[slot];
+        return !item.IsAir;
     }
 
     public static int GetAllUsedAccSlots(Player player) {
@@ -484,11 +483,15 @@ public static class TileUtils {
 
         int iterations = 0;
 
-        for (int i = (int)checkPos.Y; i > (int)checkPos.Y - heightCheck; i--) {
-            iterations++;
+        // 以 8 像素为步长采样：逐像素最多要跑 480 次 DrownCollision，
+        // 而调用方只关心 320px 量级的梯度，8px 的量化误差可以忽略。
+        const int step = 8;
+
+        for (int i = (int)checkPos.Y; i > (int)checkPos.Y - heightCheck; i -= step) {
+            iterations += step;
 
             bool isWaterExistent = Collision.DrownCollision(checkPos - new Vector2(0, iterations), 1, 1, -1);
-            if (!isWaterExistent || iterations == heightCheck) {
+            if (!isWaterExistent || iterations >= heightCheck) {
                 yDist = iterations;
                 break;
             }

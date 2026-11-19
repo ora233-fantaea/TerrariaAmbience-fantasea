@@ -17,6 +17,7 @@ using Terraria.ModLoader.Core;
 using System.Reflection;
 using TerrariaAmbience.Sounds;
 using TerrariaAmbience.Sounds.SoundFilters;
+using TerrariaAmbience.Sounds.SoundFilters.FAudioHacks;
 using TerrariaAmbience.Common.Systems;
 using TerrariaAmbience.Content.AddedNPCSounds;
 
@@ -29,6 +30,16 @@ public partial class TerrariaAmbience : Mod {
     public static float WorkaroundDeltaTime { get; private set; }
 
     public static bool WeaponOutLoaded;
+
+    const string AmbienceSoundPrefix = "TerrariaAmbience/Sounds/";
+    const int MaxForwardedSfxPerSecond = 30;
+
+    static uint _sfxForwardWindow;
+    static readonly int[] _sfxForwardCount = new int[256];
+
+    // 开启 bossFightMusicAdjust 前的原始音乐音量；关闭该选项时还原，避免静默改掉用户设置。
+    static float _musicVolumeBeforeAdjust = -1f;
+
     public override object Call(params object[] args) {
         try {
             string message = args[0] as string;
@@ -127,9 +138,13 @@ public partial class TerrariaAmbience : Mod {
         _versCache = Main.versionNumber;
         Main.versionNumber += $", Terraria Ambience v{Version}";
 
-        AmbientHandler.InitializeAllAmbienceToAvoidRuntimeOverhead();
-        AmbientPlayer.DetermineNonArmoryArmors();
-        SlimeSounds.PopulateSlimes();
+        // 服务端不需要任何音频资源。InitializeAllAmbienceToAvoidRuntimeOverhead 用的是
+        // DeferredLoad，请求会在随后的资源加载阶段真的把 24 条森林音轨解压进内存。
+        if (!Main.dedServ) {
+            AmbientHandler.InitializeAllAmbienceToAvoidRuntimeOverhead();
+            AmbientPlayer.DetermineNonArmoryArmors();
+            SlimeSounds.PopulateSlimes();
+        }
         // calls DefaultAmbientHandler.Initialize() via the ctor
         // Ambience.Initialize();
 
@@ -182,6 +197,12 @@ public partial class TerrariaAmbience : Mod {
                 foundBoss = true;
                 break;
             }
+
+            // 第一次启用时记录玩家原本的音乐音量，关闭功能时还原。
+            // 原实现直接把 Main.musicVolume 收敛到固定值，退出后用户设置就被改掉了。
+            if (_musicVolumeBeforeAdjust < 0f)
+                _musicVolumeBeforeAdjust = Main.musicVolume;
+
             const float epsilon = 0.002f;
             var max = MathF.Round(ambCfg.bossFightMusicVolume, 2);
             var min = MathF.Round(ambCfg.bossFightMusicMin, 2);
@@ -191,6 +212,10 @@ public partial class TerrariaAmbience : Mod {
                 Main.musicVolume = min;
             else if (max - Main.musicVolume < epsilon)
                 Main.musicVolume = max;
+        }
+        else if (_musicVolumeBeforeAdjust >= 0f) {
+            Main.musicVolume = _musicVolumeBeforeAdjust;
+            _musicVolumeBeforeAdjust = -1f;
         }
 
         if (Main.gameMenu)
@@ -229,15 +254,24 @@ public partial class TerrariaAmbience : Mod {
     }
 
     static void UnloadAllSFXSoWeCanAvoidStupidCrashesThatHappenOnUnload() {
-        // if null, nothing in this mod has even loaded yet xd
-        if (DefaultAmbientHandler == null) return;
-        DefaultAmbientHandler.CampfireCrackleInstance?.Dispose();
-        DefaultAmbientHandler.CampfireCrackleInstance = null;
+        // 注意：这里不能因为 DefaultAmbientHandler 为 null 就整体返回，
+        // 否则服务端（Handler 从未构造）会跳过下面所有音源的释放。
+        var handler = DefaultAmbientHandler;
+        if (handler is not null) {
+            try {
+                handler.CampfireCrackleInstance?.Stop();
+            }
+            catch {
+                // 设备已回收时 Stop 可能抛异常，忽略。
+            }
 
-        AmbientPlayer.soundSlippyRoughInst?.Dispose();
-        AmbientPlayer.soundSlippyRoughInst = null;
-        AmbientPlayer.soundSlippySmoothInst?.Dispose();
-        AmbientPlayer.soundSlippySmoothInst = null;
+            handler.CampfireCrackleInstance?.Dispose();
+            handler.CampfireCrackleInstance = null;
+        }
+
+        AmbientPlayer.DisposeIceSounds();
+        Common.PositionalAudio2D.DisposeAll();
+        FAudioReverbController.Shutdown();
     }
 
     public float lastPlayerPositionOnGround;
@@ -249,10 +283,15 @@ public partial class TerrariaAmbience : Mod {
         switch (packet) {
             case TAPID.SEND_CRAFT:
                 if (Main.dedServ) {
+                    // 顺序必须与接收端一致：客户端按 String → Vector2 读取。
+                    // 原先是 Vector2 → String，客户端会把位置的前 4 字节当成字符串长度。
+                    var path = reader.ReadString();
+                    var pos = reader.ReadVector2();
+
                     var p = GetPacket();
                     p.Write(packet);
-                    p.WriteVector2(reader.ReadVector2());
-                    p.Write(reader.ReadString());
+                    p.Write(path);
+                    p.WriteVector2(pos);
                     p.Send(ignoreClient: whoAmI);
                 }
                 else {
@@ -265,10 +304,15 @@ public partial class TerrariaAmbience : Mod {
                 break;
             case TAPID.SEND_AM_AMB:
                 if (Main.dedServ) {
+                    int morning = reader.ReadInt32();
+                    int day = reader.ReadInt32();
+
                     var p = GetPacket();
                     p.Write(packet);
-                    p.Write(reader.ReadInt32());
-                    p.Write(reader.ReadInt32());
+                    p.Write(morning);
+                    p.Write(day);
+                    // 原先写完就丢了，服务端从未真正转发，昼夜曲目在联机里根本不同步。
+                    p.Send(ignoreClient: whoAmI);
                 }
                 else {
                     DefaultAmbientHandler.morningAmbienceForTheDay = reader.ReadInt32();
@@ -279,17 +323,22 @@ public partial class TerrariaAmbience : Mod {
                     DefaultAmbientHandler.ForestDay.ChangeTrack(AmbientHandler.AmbientPath + 
                         $"biome/forest/day_{DefaultAmbientHandler.dayAmbienceForTheDay}");
 
-                    SyncAmbienceSystem.curEveningAmb = DefaultAmbientHandler.morningAmbienceForTheDay;
-                    SyncAmbienceSystem.curNightAmb = DefaultAmbientHandler.dayAmbienceForTheDay;
+                    SyncAmbienceSystem.curMorningAmb = DefaultAmbientHandler.morningAmbienceForTheDay;
+                    SyncAmbienceSystem.curDayAmb = DefaultAmbientHandler.dayAmbienceForTheDay;
                 }
                 break;
             case TAPID.SEND_PM_AMB:
                 if (Main.dedServ) {
+                    int evening = reader.ReadInt32();
+                    int night = reader.ReadInt32();
+
                     var p = GetPacket();
                     p.Write(packet);
                     // peak readability
-                    p.Write(reader.ReadInt32());
-                    p.Write(reader.ReadInt32());
+                    p.Write(evening);
+                    p.Write(night);
+                    // 同样补上缺失的发送。
+                    p.Send(ignoreClient: whoAmI);
                 }
                 else {
                     DefaultAmbientHandler.eveningAmbienceForTheDay = reader.ReadInt32();
@@ -306,12 +355,32 @@ public partial class TerrariaAmbience : Mod {
                 break;
             case TAPID.SEND_AMB_SFX:
                 if (Main.dedServ) {
+                    var path = reader.ReadString();
+                    var pos = reader.ReadVector2();
+                    var pitch = reader.ReadSingle();
+
+                    // 客户端可以伪造任意路径。不校验就等于允许任何客户端让服务器
+                    // 向所有客户端广播任意资源路径，进而触发资源加载与线扫。
+                    if (path is null || !path.StartsWith(AmbienceSoundPrefix, StringComparison.Ordinal)) {
+                        Logger.Warn($"Ignored forwarded ambient SFX with unexpected path: {path}");
+                        return;
+                    }
+
+                    // 简易限速：每客户端每秒最多转发 30 条。
+                    uint window = Main.GameUpdateCount / 60;
+                    if (window != _sfxForwardWindow) {
+                        _sfxForwardWindow = window;
+                        Array.Clear(_sfxForwardCount, 0, _sfxForwardCount.Length);
+                    }
+                    if (whoAmI >= 0 && whoAmI < _sfxForwardCount.Length && ++_sfxForwardCount[whoAmI] > MaxForwardedSfxPerSecond)
+                        return;
+
                     var p = GetPacket();
                     p.Write(packet);
-                    p.Write(reader.ReadString());
-                    p.WriteVector2(reader.ReadVector2());
-                    p.Write(reader.ReadSingle());
-                    p.Send();
+                    p.Write(path);
+                    p.WriteVector2(pos);
+                    p.Write(pitch);
+                    p.Send(ignoreClient: whoAmI);
                 }
                 else {
                     var path = reader.ReadString();
@@ -363,7 +432,10 @@ public partial class TerrariaAmbience : Mod {
                 }
                 break;
             default:
-                throw new Exception("Unidentified.");
+                // 客户端与服务端的 mod 版本不一致时，未知包会持续到达；
+                // 抛异常会让每次 HandlePacket 都失败，改成记录一次并忽略。
+                Logger.Warn($"TerrariaAmbience: ignoring unidentified packet id {packet}.");
+                return;
         }
     }
 }
