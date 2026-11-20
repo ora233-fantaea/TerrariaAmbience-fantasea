@@ -226,7 +226,9 @@ public class SoundFilterSystem : ModSystem {
         fParam.Reverb = FAudioReverbController.DefaultFAudioReverb;
 
         if (!aaCfg.advancedReverbCalculation) {
-            fParam.ReverbGain = MathUtils.InverseLerp((float)Main.worldSurface * 16, Main.maxTilesY * 16, Main.LocalPlayer.Center.Y, true);
+            // 简化的按深度插值路径同样要受湿度控制，否则关掉高级混响后这个开关会失效。
+            fParam.ReverbGain = MathUtils.InverseLerp((float)Main.worldSurface * 16, Main.maxTilesY * 16, Main.LocalPlayer.Center.Y, true)
+                * Math.Clamp(aaCfg.reverbWetness, 0f, 1f);
             SetFilterValues(pos, Vector2.Zero, ref fParam, playerUnderwater);
             return fParam;
         }
@@ -299,14 +301,23 @@ public class SoundFilterSystem : ModSystem {
         var gain = MathF.Min(reverbActual, 1f);
         var totalSurfaces = counts.Walls + counts.Tiles;
 
-        // params
-        fParam.Reverb.DecayTime = Math.Min(totalSurfaces * gain * 0.003f, 299.9f);
-        fParam.Reverb.ReflectionsDelay = Math.Min((uint)totalSurfaces / 16, 299u);
+        // 房间规模归一化。原实现直接把表面数量当小数用：2500 格会算出
+        // DecayTime 7.5 s、ReflectionsDelay 156 ms、RoomSize 1250（FAudio 上限是 100）。
+        // 结果每一下脚步都挂数秒湿声，硬地这类脉冲音上尤其明显。
+        // 取 2000 作为“大石室”的参考上限，把三个量都映射回可用区间。
+        float norm = Math.Clamp(totalSurfaces / 2000f, 0f, 1f);
+        float roomScale = norm * gain;
+
+        fParam.Reverb.DecayTime = 0.2f + 1.8f * roomScale;                          // 0.2 ~ 2.0 s
+        fParam.Reverb.ReflectionsDelay = (uint)MathF.Round(4f + 24f * roomScale);   // 4 ~ 28 ms
+        fParam.Reverb.ReverbDelay = (byte)MathF.Round(8f + 32f * roomScale);        // 8 ~ 40 ms
+        fParam.Reverb.RoomSize = Math.Clamp(100f * roomScale, 0f, 100f);            // 0 ~ 100，不再越界
         fParam.Reverb.EarlyDiffusion = (byte)Math.Min(totalSurfaces * EARLY_DIFF_SCALE, 15f);
-        fParam.Reverb.RoomSize = totalSurfaces * gain * 0.5f;
 
         SetFilterValues(pos, Vector2.Zero, ref fParam, playerUnderwater);
-        fParam.ReverbGain = gain;
+
+        // 送量：原本最大 1.0，等于湿声与干声等响。按配置的湿度缩放。
+        fParam.ReverbGain = gain * Math.Clamp(aaCfg.reverbWetness, 0f, 1f);
 
         fParam.LowPassEnabled = aaCfg.isSoundOcclusionEnabled;
         fParam.BandPassEnabled = aaCfg.isSoundDampeningEnabled;

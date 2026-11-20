@@ -87,6 +87,16 @@ Configs: {
 			Tooltip: Makes sounds have a reverberation factor depending on environment or depth, depending on what settings for reverb you have enabled.
 		}
 
+		reverbWetness: {
+			Label: Reverb Wetness
+			Tooltip:
+				'''
+				How much of each sound is sent into the reverb bus.
+				0 removes the wet signal entirely; higher values make rooms sound wetter.
+				Only has an effect while Reverb is enabled.
+				'''
+		}
+
 		reverbUsingRaycasting: {
 			Label: Reverb Raycasting
 			Tooltip:

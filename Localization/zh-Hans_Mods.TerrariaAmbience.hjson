@@ -1,0 +1,337 @@
+Configs: {
+	InventorySoundsConfig: {
+		DisplayName: 物品栏音效
+
+		useItemSwapSounds: {
+			Label: 切换手持物品时播放音效
+			Tooltip: 开启后，切换手持物品会播放对应的拿起/放下音效。
+		}
+
+		volumeMultiplier: {
+			Label: 音效音量
+			Tooltip: 物品栏音效的总音量倍率。设为 0 可关闭。
+		}
+
+		enabledDynamicSoundsSystem: {
+			Label: 动态物品栏音效
+			Tooltip:
+				'''
+				是否启用动态物品栏音效系统。
+				关闭后将改用原版的“抓取”音效。
+				'''
+		}
+	}
+
+	AudioConfig: {
+		DisplayName: 音效与滤波
+
+		Headers: {
+			SoundEffects: 附加音效
+			SoundFilters: 声音滤波
+		}
+
+		campfireSounds: {
+			Label: 篝火噼啪声
+			Tooltip:
+				'''
+				播放篝火周围的立体声噼啪声。
+				默认开启。
+				'''
+		}
+
+		craftingSoundsVolume: {
+			Label: 合成音效音量
+			Tooltip: 玩家合成物品时音效的音量倍率。设为 0 可关闭。
+		}
+
+		slimySounds: {
+			Label: 史莱姆音效
+			Tooltip: 史莱姆跳跃与落地时附加的音效。
+		}
+
+		woodCreaks: {
+			Label: 木材吱呀声
+			Tooltip:
+				'''
+				缺少支撑的木质结构会发出轻微吱呀声。
+				注意：开启此项会增加一定的计算开销。
+				'''
+		}
+
+		dynamicAnimalSounds: {
+			Label: 环境动物叫声
+			Tooltip: 播放虫鸣、猫头鹰等环境动物声，并按与玩家的相对位置动态调整声像。音量偏大。
+		}
+
+		chestSounds: {
+			Label: 容器开合音效
+			Tooltip:
+				'''
+				打开或关闭箱子等容器时播放音效。
+				此设置在全服共享。
+				'''
+		}
+
+		newSplashSounds: {
+			Label: 入水与水花音效
+			Tooltip:
+				'''
+				本模组新增的水体交互音效（实体入水、涉水等）。
+				默认开启。
+				此设置在全服共享，更改后需要重载模组。
+				'''
+		}
+
+		runSoundsEnabled: {
+			Label: 原版奔跑音效
+			Tooltip: 是否保留原版“奔跑”音效（赫尔墨斯靴等）。默认关闭，由本模组更细的脚步声替代。
+		}
+
+		isReverbEnabled: {
+			Label: 混响
+			Tooltip:
+				'''
+				按所处环境或深度为声音添加混响。
+				关闭后声音会明显变干，但能消除室内脚步声的拖尾与叠加感。
+				'''
+		}
+
+		reverbWetness: {
+			Label: 混响湿度
+			Tooltip:
+				'''
+				每个声音送入混响的量。
+				0 等于完全关掉湿声，数值越大房间感越重。
+				仅在“混响”开启时有效。室内脚步声发糊时优先调低这一项。
+				'''
+		}
+
+		reverbUsingRaycasting: {
+			Label: 混响射线检测
+			Tooltip:
+				'''
+				开启后用逐格射线计算混响，精度更高，但开销显著。
+				混响关闭时此项无效。
+				'''
+		}
+
+		reverbMaxArea: {
+			Label: 混响计算范围
+			Tooltip:
+				'''
+				房间与混响系统以玩家头部为中心搜索的最大格数。
+				数值越大，大厅堂的听感越准确，开销也越大。
+				2500 适合多数电脑；5000 在较弱机器上可能掉帧。
+				高级混响关闭时此项无效。
+				'''
+		}
+
+		audioFiltersRefreshTime: {
+			Label: 滤波刷新间隔
+			Tooltip:
+				'''
+				重新计算全部声音滤波参数的间隔，单位为 tick（60 tick 约 1 秒）。
+				数值越小越吃 CPU，越大则越省。
+				'''
+		}
+
+		advancedReverbCalculation: {
+			Label: 高级混响
+			Tooltip:
+				'''
+				用房间形状而非深度来决定混响。
+				关闭后混响强度只随深度线性变化，房间大小不再影响听感。
+				混响关闭时此项无效。
+				'''
+		}
+
+		isSoundDampeningEnabled: {
+			Label: 声音闷化
+			Tooltip: 在合适的情境下（例如水下）让声音变闷。
+		}
+
+		isSoundOcclusionEnabled: {
+			Label: 声音遮挡
+			Tooltip: 当声源与玩家之间的视线被方块阻挡时，按距离与遮挡密度让声音变闷。
+		}
+	}
+
+	FootstepsConfig: {
+		DisplayName: 脚步声
+
+		entityFootstepsVolume: {
+			Label: 生物脚步声
+			Tooltip:
+				'''
+				城镇 NPC、僵尸等生物的脚步音量。
+				设为 0 可关闭。
+				'''
+		}
+
+		masterFootstepsVolume: {
+			Label: 脚步声总音量
+			Tooltip: 玩家脚步声的总音量。设为 0 可关闭全部脚步声。
+		}
+
+		wetStepsEnabled: {
+			Label: 雨天湿地脚步声
+			Tooltip:
+				'''
+				下雨且玩家不在屋檐下时，脚步会带上湿地音色。
+				关闭可略微降低开销。
+				'''
+		}
+
+		areArmorAndVanitySoundsEnabled: {
+			Label: 盔甲与时装脚步声
+			Tooltip: 穿戴盔甲或时装时，行走会额外播放金属或布料声。关闭后只剩地面音色。
+		}
+	}
+
+	AmbientConfig: {
+		DisplayName: 环境音
+
+		Headers: {
+			RealTimeTweaks: 实时调节
+			Debugging: 调试
+			AmbienceTrackVolumes: 各场景音量
+		}
+
+		bossFightMusicAdjust: {
+			Label: BOSS 战自动调整音乐音量
+			Tooltip:
+				'''
+				开启后，BOSS 存活期间音乐音量会缓慢升到“BOSS 战时音量”，
+				战斗结束后再回落到“非 BOSS 战时音量”。
+				'''
+		}
+
+		bossFightMusicVolume: {
+			Label: BOSS 战时音量
+			Tooltip: 若开启“BOSS 战自动调整音乐音量”，有 BOSS 存活时音量会缓慢升到此值。
+		}
+
+		bossFightMusicMin: {
+			Label: 非 BOSS 战时音量
+			Tooltip: 若开启“BOSS 战自动调整音乐音量”，无 BOSS 时音量会缓慢回落到此值。
+		}
+
+		debugInterface: {
+			Label: 调试信息
+			Tooltip: 在屏幕上显示各音轨的实时音量（雪原、虫鸣等）。默认关闭。
+		}
+
+		showInfoAndWarnings: {
+			Label: 显示信息与警告
+			Tooltip:
+				'''
+				出现异常时在聊天框提示。
+				关闭可以减少刷屏，但也会让你难以判断是什么在拖慢游戏。
+				若出现严重掉帧，建议开启以确认是否有报错在刷屏。
+				'''
+		}
+
+		overallVolume: {
+			Label: 环境音总音量
+			Tooltip: 本模组所有环境音的总音量。
+		}
+
+		transitionHarshness: {
+			Label: 环境音过渡速度
+			Tooltip:
+				'''
+				控制音轨切换的渐变速度。
+				数值越小过渡越柔和，接近 1 则几乎瞬间切换，建议不超过 0.075。
+				注意：此项为文本输入，填入非数字会退回 0.01。
+				'''
+		}
+
+		forestVolumes: {
+			Label: 森林
+			Tooltip:
+				'''
+				顺序（上 → 下）：
+				早晨
+				白天
+				黄昏
+				夜晚
+				'''
+		}
+
+		snowVolume: {
+			Label: 雪原
+			Tooltip: ""
+		}
+
+		jungleVolumes: {
+			Label: 丛林
+			Tooltip:
+				'''
+				顺序（上 → 下）：
+				地表白天
+				地表夜晚
+				地下白天
+				地下夜晚
+				'''
+		}
+
+		evilVolumes: {
+			Label: 邪恶生物群落
+			Tooltip:
+				'''
+				顺序（上 → 下）：
+				腐化
+				猩红
+				'''
+		}
+
+		desertVolume: {
+			Label: 沙漠
+			Tooltip: ""
+		}
+
+		oceanVolume: {
+			Label: 海洋
+			Tooltip: ""
+		}
+
+		cavernsVolume: {
+			Label: 洞穴
+			Tooltip: ""
+		}
+
+		hellVolume: {
+			Label: 地狱
+			Tooltip: ""
+		}
+
+		breezeVolume: {
+			Label: 风
+			Tooltip: ""
+		}
+
+		underwaterVolume: {
+			Label: 水下
+			Tooltip: ""
+		}
+	}
+
+	UIConfig: {
+		DisplayName: 界面
+
+		Headers: {
+			MainMenu: 主菜单
+			In-game: 游戏内
+		}
+
+		showMainMenuUi: {
+			Label: 显示主菜单信息
+			Tooltip: 是否在主菜单显示 Discord 与免责声明。
+		}
+
+		showAmbientForecastUi: {
+			Label: 显示环境音预报
+			Tooltip: 是否在快捷栏附近显示当前环境音预报。
+		}
+	}
+}

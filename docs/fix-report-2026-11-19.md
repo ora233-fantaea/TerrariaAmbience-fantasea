@@ -145,3 +145,58 @@
 - **B27**：`Common/AStar.cs` 无任何调用者，属死代码，删除与否不影响运行；本轮未动。
 - **API 侧 A1–A12**：位于 `lib/TerrariaAmbienceAPI.dll`（独立模组 `2826615136`）。修它等于 fork 第三方依赖，不在"修本仓库 bug"的范围内。其中 A4（`ChangeTrack` 假定实例非空）已在本仓库侧用 N1 的判空兜住；A1/A2 只影响 `ModStreamedAmbience`，主模组零引用。
 - **听感与频率**：B15/B16/B19/B2 修复后的实际听感、FNA voice 数量变化，需要一次真实进世界的会话才能确认。
+
+---
+
+## 8. 待验：室内走路出现"震颤 + 电流音"（2026-11-19 记录，未动手）
+
+**现象**：室内行走时可听到类似"系统提示音颤抖、夹杂电流"的质感。
+
+### 8.1 机制已量化
+
+`Sounds/Custom/steps/armor/heavy1..9` 是 **32 kHz 单声道、每段 801 ms** 的采样，而行走步频约 350 ms。
+tML 的 `SoundStyle` 默认 `MaxInstances = 1`、`SoundLimitBehavior = ReplaceOldest`、`LimitsArePerVariant = false`；
+但 API 的 `FootstepSound.PlayAny` 是 `SoundEngine.PlaySound(ref SoundStyles[Main.rand.Next(n)], ...)`
+—— **每个变体预建了独立的 `SoundStyle`**，于是这份"最多 1 个"的预算按变体各算一份，不是整组共用。
+
+结果（9 个变体、350 ms 步频、801 ms 采样，相邻两步必然重叠）：
+
+| 情形 | 概率 | 听感 |
+|---|---:|---|
+| 相邻两步抽到不同变体 | 8/9 ≈ 89% | 两段金属衰减尾叠在一起 → 拍频/梳状滤波 → "颤" |
+| 相邻两步抽到同一变体 | 1/9 ≈ 11% | `ReplaceOldest` 在非零振幅处硬切旧实例 → "咔" |
+
+### 8.2 三条待验假设（按成本排序）
+
+| # | 假设 | 验证成本 |
+|---|---|---|
+| H1 | `ActiveSound_Play` 中 `SetOutputVoices` 现在作用在**已发声**的 voice 上（本轮删掉重复 `Play()` 的副作用，见下） | 改 3 行，10 分钟 |
+| H2 | 盔甲/时装/地形三层 `UseAnyTile = true` 同时匹配，与 8.1 的变体叠加共同作用 | 脱掉头盔胸甲走两步，零改动 |
+| H3 | 室内 `GenerateAudioFilters(PlayerRoom)` 的混响参数在小房间下过强，形成金属余响 | 关掉 reverb 开关对比 |
+
+### 8.3 H1 的现成补丁（未应用）
+
+当前 `Sounds/SoundFilters/FilterHooks.cs` 的顺序是先播再挂滤波：
+
+```csharp
+orig(self);                             // 已经出声
+var vol = self.Sound.Volume;
+self.Sound.Volume = 0;
+ActiveSoundFilter(self, self.Sound);    // 内部 SetOutputVoices
+self.Sound.Volume = vol;
+```
+
+原版此处结尾还有一句 `self.Sound.Play()` 重启播放（B29 的"双重播放"），它虽然多余，却让路由切换发生在重新起播之前、瞬态被掩盖。删掉后瞬态暴露。
+若 H1 成立，改为先挂滤波再起播即可（voice 尚未发声，切换路由无害，且无需归零音量）：
+
+```csharp
+ActiveSoundFilter(self, self.Sound);
+orig(self);
+```
+
+### 8.4 若 H1/H2 都不成立，再考虑探测 mod
+
+设计要点已讨论，不落库：四个通道 —— T1 分层静音（热键逐层关，靠耳朵二分）、T2 播放账本（tick/路径/音量/音高）、
+T3 同路径存活实例计数与截断次数（把"像叠加"变成"第 N 帧确有 2 个实例"）、T4 `FAudioVoice_GetState` 在 attach 时的返回值与每帧参数 Δ。
+硬约束：采集须纯读无副作用、环形缓冲退出时一次落盘、报告直接给结论。
+注意 `PlayAny` 会改写预建 `SoundStyle` 的 `Volume` 字段，属共享可变状态，探测时不要并发读写。

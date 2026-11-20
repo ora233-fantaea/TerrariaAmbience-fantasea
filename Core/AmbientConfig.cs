@@ -124,6 +124,10 @@ public class AudioConfig : ModConfig {
     [DefaultValue(true)]
     public bool isReverbEnabled;
 
+    [DefaultValue(0.3f)]
+    [Range(0f, 1f)]
+    public float reverbWetness;
+
     [DefaultValue(true)]
     public bool reverbUsingRaycasting;
 
