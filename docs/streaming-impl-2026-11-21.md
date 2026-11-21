@@ -199,18 +199,66 @@ Idle ──(volume > 0)──> 起后台线程 ──(预填 3 块)──> 主�
 由于实现已改成「只 seek 到 0」，音频内容是正确的，只是尾巴上这一小段永远听不到。
 9.3 ms 对一条 10 秒的雨声循环不可分辨，因此不做特殊处理，仅登记。
 
-## 9. 已知环境问题（与本次改动无关）
+## 9. 打包：可复现配方（已打通）
 
-用 `tModLoader.dll -build` 打包会失败，报 25 个 FNA 内部成员不可访问的错误（`FNAPlatform`、`MarshalHelper`、`SoundEffectInstance.handle` 等）。
-这些文件本轮完全没有改动（`FAudioReverbController`、`FilterHelpers`、`MenuMusicGuard`），
-原因是 `BuildMod=true` 这条路径下 csproj 里的 `Krafs.Publicizer`（`<Publicize Include="FNA" />`）没有生效，
-而 `dotnet build -p:BuildMod=false` 是正常的。
+### 9.1 为什么之前会失败
 
-另外 tML 的 `-build` 按**文件夹名**匹配 csproj：目录必须叫 `TerrariaAmbience`，否则会退化成不带包引用的默认编译。
-本仓库目录名为 `Terraria-Ambience-Stream-branch`，因此直接打包会走错路径。
+`dotnet tModLoader.dll -build <dir>` 会**自己先编译一遍**。这条路径下 `Krafs.Publicizer`（csproj 里的
+`<Publicize Include="FNA" />`）没有生效，于是 `FNAPlatform` / `MarshalHelper` / `SoundEffectInstance.handle`
+这些 FNA 内部成员全变成不可访问，报 25 个错——全部落在本轮未改动的文件里。
 
-结论：打包请在 tModLoader 界面里进行，或把目录名改为 `TerrariaAmbience` 后放入 `ModSources`。
-本轮只保证 `dotnet build -p:BuildMod=false` 通过、程序集内包含三个新类型。
+单独验证过：`dotnet build -t:Compile -p:BuildMod=true` **零错误**，所以问题不在 `tMLMod.targets`，
+而在 `-build` 触发的那次编译。
+
+### 9.2 正确做法：分两步，打包时复用已编译 DLL
+
+`tMLMod.targets` 自己的 `BuildMod` 目标就是这么调的（`-eac $(TargetPath)`），照抄即可：
+
+```bat
+:: 1) 只编译，不打包
+dotnet build TerrariaAmbience.csproj -c Release -p:BuildMod=false
+
+:: 2) 打包，-eac 指向刚编译出的 DLL（跳过第二次编译）
+dotnet tModLoader.dll -build "<源目录>" ^
+  -eac "<源目录>\bin\Release\net8.0\TerrariaAmbience.dll" ^
+  -unsafe true -savedirectory "<隔离 savedir>"
+```
+
+生效标志：输出里出现 `Loading pre-compiled ... from TerrariaAmbience.dll` 后直接 `Packaging:`，
+中间没有 `Compiling`。
+
+**目录名必须是 `TerrariaAmbience`。** `-build` 用文件夹名当模组内部名；本仓库目录叫
+`Terraria-Ambience-Stream-branch`，直接从仓库根打包会得到内部名错误、且 `build.txt` 之外的元数据也按文件夹名走。
+所以先复制/链接出一个同名目录再打包。
+
+### 9.3 实测结果
+
+| 项 | 值 |
+|---|---|
+| 产物 | `TerrariaAmbience.tmod`，63,981,018 B |
+| 内部名 | `TerrariaAmbience`（`Adding Content: Terraria Ambience v0.3.7.1` 可证） |
+| 资源条目 | `Sounds/Custom/ambient/biome/snow/windy.ogg` 等，与代码拼接的路径逐字一致 |
+| 服务器加载 | `Adding Content` → `Finalizing Content` → `Adding Recipes`，零异常 |
+| 客户端加载 | 独立 tML 2026.9.3.1 客户端进到主菜单，模组正常加载 |
+
+### 9.4 独立运行时的准备（不碰游戏安装目录）
+
+```bat
+:: 官方发布包自带 Content 与 Libraries，只有 61 MB
+curl -L -o tModLoader.zip ^
+  https://github.com/tModLoader/tModLoader/releases/download/v2026.09.3.1/tModLoader.zip
+unzip tModLoader.zip -d runtime
+```
+
+发布包**不含 `dotnet/`**，用系统 dotnet 启动即可；`-savedirectory` 指到工作区，
+`-steamworkshopfolder` 指到一个空目录，`tModLoader-Logs` 会落在 DLL 同级目录（即工作区）。
+
+客户端找模组的目录是 **`<savedir>/tModLoader/Mods`**，不是 `-modpath` 指定的那个（实测 `-modpath` 对客户端无效，
+它会自己新建 `<savedir>/tModLoader/Mods` 并写一个 `enabled.json = []`）。服务器模式才认 `-modpath`。
+
+ModConfig 文件名是 `<模组名>_<配置类名>.json`，放在 `<savedir>/tModLoader/ModConfigs/`。
+本轮用它把 `streamAmbientBeds` 置为 `true`，日志随即从
+`Ambience streaming: disabled, 25 resident` 变成 `enabled, 1 streamed / 24 resident`。
 
 ## 10. 下一动作（S3）
 
