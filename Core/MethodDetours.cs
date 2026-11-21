@@ -1,4 +1,5 @@
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Audio;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using System;
@@ -323,6 +324,30 @@ internal class MethodDetours {
     static float posX;
     static float posY;
     static bool active;
+
+    static int _deviceSampleRate = -1;
+    static int _rateCheckCooldown;
+
+    /// <summary>
+    /// 仅在设备输出采样率高于 48 kHz 时提示。读不到设备信息时按正常处理，
+    /// 避免在没有音频设备的机器上误报。
+    /// </summary>
+    static bool ShouldWarnAboutAudioRate() {
+        if (Main.dedServ)
+            return false;
+
+        if (_deviceSampleRate < 0 || --_rateCheckCooldown <= 0) {
+            _rateCheckCooldown = 120;
+            try {
+                _deviceSampleRate = (int)SoundEffect.Device().DeviceDetails.OutputFormat.Format.nSamplesPerSec;
+            }
+            catch {
+                _deviceSampleRate = 0;
+            }
+        }
+
+        return _deviceSampleRate > 48000;
+    }
     static void Main_DrawMenu(On_Main.orig_DrawMenu orig, Main self, GameTime gameTime) {
         Mod mod = ModContent.GetInstance<TerrariaAmbience>();
 
@@ -371,25 +396,38 @@ internal class MethodDetours {
             ChatManager.DrawColorCodedStringWithShadow(sb, FontAssets.DeathText.Value, viewPost, new Vector2(posX, posY), Color.LightGray, 0f, Vector2.Zero, new Vector2(0.35f, 0.35f), 0, 1);
             ChatManager.DrawColorCodedStringWithShadow(sb, FontAssets.DeathText.Value, server, new Vector2(posX + (int)(FontAssets.DeathText.Value.MeasureString(viewPost).X * 0.35f) + 10, posY), hovering ? Color.White : Color.Gray, 0f, Vector2.Zero, new Vector2(0.35f, 0.35f), 0, 1);
 
-            var alert = "!!! WARNING !!!";
-            var disclaimer1 = "Ensure your audio device is set to 48000hz or less.";
-            var disclaimer2 = "Otherwise, your game will crash soon after entering a world.";
+            if (ShouldWarnAboutAudioRate()) {
+                var font = FontAssets.DeathText.Value;
+                var alert = "!!! WARNING !!!";
+                var disclaimer1 = $"Your audio device is running at {_deviceSampleRate} Hz.";
+                var disclaimer2 = "Entering a world may crash. Set it to 48000 Hz or lower.";
 
-            var alertScale = 0.4f;
-            var txtScale = 0.3f;
+                const float alertScale = 0.4f;
+                const float txtScale = 0.3f;
 
-            ChatManager.DrawColorCodedStringWithShadow(sb, FontAssets.DeathText.Value, alert,
-                new Vector2(Main.screenWidth - 10, 10),
-                Color.Yellow, 0f, new Vector2(FontAssets.DeathText.Value.MeasureString(alert).X, 0), new Vector2(alertScale), 0, 1);
+                float alertH = font.MeasureString(alert).Y * alertScale;
+                float line1H = font.MeasureString(disclaimer1).Y * txtScale;
+                float line2H = font.MeasureString(disclaimer2).Y * txtScale;
+                float boxW = MathF.Max(font.MeasureString(alert).X * alertScale,
+                    MathF.Max(font.MeasureString(disclaimer1).X * txtScale,
+                              font.MeasureString(disclaimer2).X * txtScale));
 
-            ChatManager.DrawColorCodedStringWithShadow(sb, FontAssets.DeathText.Value, disclaimer1,
-                new Vector2(Main.screenWidth - 10, 10 + FontAssets.DeathText.Value.MeasureString(alert).Y * alertScale),
-                Color.White, 0f, new Vector2(FontAssets.DeathText.Value.MeasureString(disclaimer1).X, 0), new Vector2(txtScale), 0, 1);
+                // 底衬：主菜单同层还有其他模组的绘制（例如 CalamityOverhaul 的版本号
+                // 与链接），没有底衬时这里的文字会被压住看不清。
+                sb.Draw(TextureAssets.MagicPixel.Value,
+                    new Rectangle(6, 6, (int)boxW + 12, (int)(alertH + line1H + line2H) + 12),
+                    Color.Black * 0.65f);
 
-            ChatManager.DrawColorCodedStringWithShadow(sb, FontAssets.DeathText.Value, disclaimer2,
-                new Vector2(Main.screenWidth - 10, 10 + FontAssets.DeathText.Value.MeasureString(alert).Y * alertScale
-                + FontAssets.DeathText.Value.MeasureString(disclaimer1).Y * txtScale),
-                Color.White, 0f, new Vector2(FontAssets.DeathText.Value.MeasureString(disclaimer2).X, 0), new Vector2(txtScale), 0, 1);
+                float ty = 12f;
+                ChatManager.DrawColorCodedStringWithShadow(sb, font, alert,
+                    new Vector2(12f, ty), Color.Yellow, 0f, Vector2.Zero, new Vector2(alertScale), 0, 1);
+                ty += alertH;
+                ChatManager.DrawColorCodedStringWithShadow(sb, font, disclaimer1,
+                    new Vector2(12f, ty), Color.White, 0f, Vector2.Zero, new Vector2(txtScale), 0, 1);
+                ty += line1H;
+                ChatManager.DrawColorCodedStringWithShadow(sb, font, disclaimer2,
+                    new Vector2(12f, ty), Color.White, 0f, Vector2.Zero, new Vector2(txtScale), 0, 1);
+            }
         }
 
         GeneralHelpers.MSOld = GeneralHelpers.MSNew;
