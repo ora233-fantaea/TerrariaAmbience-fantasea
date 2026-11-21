@@ -260,8 +260,48 @@ ModConfig 文件名是 `<模组名>_<配置类名>.json`，放在 `<savedir>/tMo
 本轮用它把 `streamAmbientBeds` 置为 `true`，日志随即从
 `Ambience streaming: disabled, 25 resident` 变成 `enabled, 1 streamed / 24 resident`。
 
-## 10. 下一动作（S3）
+## 10. S3：森林四条 + 去掉预载
 
-1. 把 `StreamedAmbience` 从「单条」扩到「流池」：`Active` 上限 4，超出时保持静音等待，不抢占。
-2. 迁森林 4 条（`ForestMorning/Day/Evening/Night`），验证 `ChangeTrack` 在黎明/黄昏切换时不爆音。
-3. 观察 `ChangeTrack` 的当前实现是「停掉重开、从 0 开始」。若切换瞬间可闻，再补位置继承。
+### 10.1 改动
+
+| 项 | 内容 |
+|---|---|
+| 迁移 | `ForestMorning` / `ForestDay` / `ForestEvening` / `ForestNight` 增加流式孪生字段，按 `StreamingEnabled` 二选一 |
+| 换曲入口 | 新增 `SetForestMorningTrack` 等四个方法，网络包与黎明/黄昏都改走它们，不再直接碰字段 |
+| 赋值收口 | `SetMaxVolume(resident, streamed, value)`，避免每个梯度都要写两遍空判断 |
+| 预载 | `InitializeAllAmbienceToAvoidRuntimeOverhead()` 从 `Mod.Load` 挪到 `AmbientHandler.Initialize`，并且**只在关闭流式时执行** |
+
+预载之所以敢跳掉：流式的 `ChangeTrack` 把「打开文件 + 建解码器 + 预填 3 块」全放在工作线程，
+黎明/黄昏换曲不会卡主线程；而常驻实现在 `ChangeTrack` 里是 `ImmediateLoad`，没预载就会当场同步解压。
+
+### 10.2 独立运行时实测（2026-11-21 15:00 前后）
+
+环境：官方发布包 `v2026.09.3.1` 解到工作区，自带 Content 与 Libraries，系统 dotnet 8.0.426，
+隔离 savedir，`-steamworkshopfolder` 指向空目录。游戏在隐藏桌面运行，不弹窗、不抢焦点。
+
+| 项 | 结果 |
+|---|---|
+| 模组加载 | `Adding Content: Terraria Ambience v0.3.7.1` → `Finalizing` → 主菜单，零异常 |
+| 开关关闭 | `Ambience streaming: disabled, 25 resident` |
+| 开关开启 | `Ambience streaming: enabled, 5 streamed / 20 resident` |
+| 工作集（关闭） | 2,230.9 → 2,286.9 MB（两次采样） |
+| 工作集（开启） | 1,343.0 → 1,370.1 MB（两次采样） |
+| 差值 | 约 **917 MB** |
+
+两点必须说清：
+
+1. 这是同机、同包、同相位（主菜单）、各两次采样的 A/B，只改了 `streamAmbientBeds`。
+2. 其中**确定**属于本改动的部分，是按解码体积算的约 236 MB（24 首森林预载 198 MB + 5 条不再常驻约 38 MB）。
+   剩余差异来自托管堆与原生分配器的行为，没有单独归因，不要当成「流式一定省 900 MB」的通用结论。
+
+### 10.3 仍未验证
+
+- 真实游玩下的换曲听感（黎明/黄昏各一次 `ChangeTrack`），需要进森林世界；
+- 4 条流同时活跃时的欠载计数，需要走到森林昼夜交界并叠加风雪；
+- 真机听感、设备热切换、长稳，同 §8.1。
+
+## 11. 下一动作（S4）
+
+1. 其余 biome（`Desert` / `Snow*` / `Jungle*` / `Beach*` / `Evils*` / `Cavern` / `Hell`）逐条迁移。
+2. `environment`（5）+ `rain`（3）是否纳入，按 §11.8 的结论——只多省 23.6 MB，建议不迁。
+3. 全部迁完后删除 `Ambiences` 与 `ModAmbience` 依赖，`InitializeAllAmbienceToAvoidRuntimeOverhead` 整段作废。

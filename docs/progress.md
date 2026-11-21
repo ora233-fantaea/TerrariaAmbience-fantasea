@@ -772,7 +772,15 @@ S1 开工前的唯一前置是上面两条待定项；确认后从 `OggStream` �
 **状态**：`SnowAggro` 已可由 `AmbientConfig.streamAmbientBeds` 切换到流式（默认关闭，改动需重载）。
 开关关闭时 `1.4` 行为逐行不变。真机听感、设备热切换、长稳未验证，需人工。
 
-**下一步**：S3（流池上限 4 + 迁森林 4 条）。
+**S3 已完成（同日下午）**：森林 4 条（Morning/Day/Evening/Night）迁移到流式，换曲走 `SetForestXTrack` 四个入口；
+24 首森林曲目的预载改为「仅关闭流式时执行」，因此开启流式后不再付 198 MB。
+真实客户端实测：`enabled, 5 streamed / 20 resident`；工作集同相位 A/B 为 2,287 MB → 1,370 MB，
+其中约 236 MB 可由解码体积解释，其余差异来自分配器，未单独归因。
+
+**打包已打通**：`dotnet build -p:BuildMod=false` 后用 `-eac` 复用 DLL 打包；目录须叫 `TerrariaAmbience`；
+产物 63,981,018 B，服务器与独立客户端均加载通过。配方见 `docs/streaming-impl-2026-11-21.md` §9。
+
+**下一步**：S4（其余 biome 逐条迁移 + 收敛掉 `Ambiences`）。
 
 ### 11.11 已知环境问题
 

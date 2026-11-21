@@ -34,6 +34,13 @@ public class AmbientHandler {
     public ModAmbience ForestEvening;
     public ModAmbience ForestNight;
 
+    // 森林四条的流式版本，与上面的常驻字段二选一，由 StreamingEnabled 在初始化时决定。
+    // 昼夜切换靠 ChangeTrack 换曲，流式实现里这条路是「停掉重开」，起播在工作线程上，不卡主线程。
+    public StreamedAmbience ForestMorningStream;
+    public StreamedAmbience ForestDayStream;
+    public StreamedAmbience ForestEveningStream;
+    public StreamedAmbience ForestNightStream;
+
     public ModAmbience Desert;
 
     public ModAmbience SnowDay;
@@ -83,6 +90,23 @@ public class AmbientHandler {
         }
     }
 
+    /// <summary>同一音轨的常驻/流式两种实现二选一，赋值时两处都写一遍太啰嗦，收在这里。</summary>
+    private static void SetMaxVolume(ModAmbience resident, StreamedAmbience streamed, float value) {
+        if (resident is not null) resident.MaxVolume = value;
+        if (streamed is not null) streamed.MaxVolume = value;
+    }
+
+    private static void SwitchTrack(ModAmbience resident, StreamedAmbience streamed, string path) {
+        if (resident is not null) resident.ChangeTrack(path);
+        if (streamed is not null) streamed.ChangeTrack(path);
+    }
+
+    // 森林四条的换曲入口。上层（网络包、黎明黄昏）不应该关心当前是哪一种实现。
+    public void SetForestMorningTrack(string path) => SwitchTrack(ForestMorning, ForestMorningStream, path);
+    public void SetForestDayTrack(string path) => SwitchTrack(ForestDay, ForestDayStream, path);
+    public void SetForestEveningTrack(string path) => SwitchTrack(ForestEvening, ForestEveningStream, path);
+    public void SetForestNightTrack(string path) => SwitchTrack(ForestNight, ForestNightStream, path);
+
     // since ModAmbience can't really do campfire stuff. lul.
     // well it technically could...
     public SoundEffectInstance CampfireCrackleInstance;
@@ -118,19 +142,38 @@ public class AmbientHandler {
             return IsStrictlySurface;
         });
 
-        ForestMorning = new(mod, AmbientPath + $"biome/forest/morning_{Main.rand.Next(1, NUM_MORNING_AMBIENCE + 1)}", "ForestMorning", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
-            return InAForest;
-        });
-        ForestDay = new(mod, AmbientPath + $"biome/forest/day_{Main.rand.Next(1, NUM_DAY_AMBIENCE + 1)}", "ForestDay", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
-            return InAForest && Main.dayTime;
-        });
-        ForestEvening = new(mod, AmbientPath + $"biome/forest/evening_{Main.rand.Next(1, NUM_EVENING_AMBIENCE + 1)}", "ForestEvening", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
-            var player = Main.LocalPlayer;
-            return InAForest;
-        });
-        ForestNight = new(mod, AmbientPath + $"biome/forest/night_{Main.rand.Next(1, NUM_NIGHT_AMBIENCE + 1)}", "ForestNight", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
-            return InAForest && !Main.dayTime;
-        });
+        if (StreamingEnabled) {
+            ForestMorningStream = new(mod, AmbientPath + $"biome/forest/morning_{Main.rand.Next(1, NUM_MORNING_AMBIENCE + 1)}", "ForestMorning", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
+                return InAForest;
+            });
+            ForestDayStream = new(mod, AmbientPath + $"biome/forest/day_{Main.rand.Next(1, NUM_DAY_AMBIENCE + 1)}", "ForestDay", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
+                return InAForest && Main.dayTime;
+            });
+            ForestEveningStream = new(mod, AmbientPath + $"biome/forest/evening_{Main.rand.Next(1, NUM_EVENING_AMBIENCE + 1)}", "ForestEvening", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
+                return InAForest;
+            });
+            ForestNightStream = new(mod, AmbientPath + $"biome/forest/night_{Main.rand.Next(1, NUM_NIGHT_AMBIENCE + 1)}", "ForestNight", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
+                return InAForest && !Main.dayTime;
+            });
+            StreamedAmbiences.Add(ForestMorningStream);
+            StreamedAmbiences.Add(ForestDayStream);
+            StreamedAmbiences.Add(ForestEveningStream);
+            StreamedAmbiences.Add(ForestNightStream);
+        }
+        else {
+            ForestMorning = new(mod, AmbientPath + $"biome/forest/morning_{Main.rand.Next(1, NUM_MORNING_AMBIENCE + 1)}", "ForestMorning", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
+                return InAForest;
+            });
+            ForestDay = new(mod, AmbientPath + $"biome/forest/day_{Main.rand.Next(1, NUM_DAY_AMBIENCE + 1)}", "ForestDay", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
+                return InAForest && Main.dayTime;
+            });
+            ForestEvening = new(mod, AmbientPath + $"biome/forest/evening_{Main.rand.Next(1, NUM_EVENING_AMBIENCE + 1)}", "ForestEvening", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
+                return InAForest;
+            });
+            ForestNight = new(mod, AmbientPath + $"biome/forest/night_{Main.rand.Next(1, NUM_NIGHT_AMBIENCE + 1)}", "ForestNight", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
+                return InAForest && !Main.dayTime;
+            });
+        }
 
         CavernLayer = new(mod, AmbientPath + "biome/cavern/wind", "CavernLayer", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
             var player = Main.LocalPlayer;
@@ -210,6 +253,12 @@ public class AmbientHandler {
             return !InATundra;
         });
 
+        // 关闭流式时必须预载：ModAmbience.ChangeTrack 是 ImmediateLoad，没预载会在黎明/黄昏
+        // 换曲的那一帧同步解压 8 MB 级的 ogg，造成可见卡顿。
+        // 开启流式则跳过这一步，24 首森林曲目一共省下约 198 MB。
+        if (!StreamingEnabled)
+            InitializeAllAmbienceToAvoidRuntimeOverhead();
+
         // finally, we add all of them via reflection because manual labor is stupid.
         Ambiences = [];
         foreach (var fld in GetType().GetFields().Where(x => x.FieldType.TypeHandle.Equals(typeof(ModAmbience).TypeHandle))) {
@@ -256,7 +305,7 @@ public class AmbientHandler {
     public void HandleEnterWorld() {
         if (Main.raining) {
             dayAmbienceForTheDay = AmbienceID.Day_Quiet;
-            ForestDay.ChangeTrack(AmbientPath + $"biome/forest/day_{dayAmbienceForTheDay}");
+            SetForestDayTrack(AmbientPath + $"biome/forest/day_{dayAmbienceForTheDay}");
         }
     }
     public static void InitializeAllAmbienceToAvoidRuntimeOverhead() {
@@ -283,8 +332,8 @@ public class AmbientHandler {
         SyncAmbienceSystem.curEveningAmb = eveningAmbienceForTheDay;
         SyncAmbienceSystem.curNightAmb = nightAmbienceForTheDay;
 
-        ForestEvening.ChangeTrack(AmbientPath + $"biome/forest/evening_{eveningAmbienceForTheDay}");
-        ForestNight.ChangeTrack(AmbientPath + $"biome/forest/night_{nightAmbienceForTheDay}");
+        SetForestEveningTrack(AmbientPath + $"biome/forest/evening_{eveningAmbienceForTheDay}");
+        SetForestNightTrack(AmbientPath + $"biome/forest/night_{nightAmbienceForTheDay}");
     }
     public void RandomizeDawnTracks() {
         morningAmbienceForTheDay = Main.rand.Next(1, NUM_MORNING_AMBIENCE + 1);
@@ -295,8 +344,8 @@ public class AmbientHandler {
         SyncAmbienceSystem.curMorningAmb = morningAmbienceForTheDay;
         SyncAmbienceSystem.curDayAmb = dayAmbienceForTheDay;
 
-        ForestDay.ChangeTrack(AmbientPath + $"biome/forest/day_{dayAmbienceForTheDay}");
-        ForestMorning.ChangeTrack(AmbientPath + $"biome/forest/morning_{morningAmbienceForTheDay}");
+        SetForestDayTrack(AmbientPath + $"biome/forest/day_{dayAmbienceForTheDay}");
+        SetForestMorningTrack(AmbientPath + $"biome/forest/morning_{morningAmbienceForTheDay}");
     }
     public void Update() {
         if (Main.dedServ)
@@ -362,10 +411,10 @@ public class AmbientHandler {
         if (!isHarshOk)
             ModContent.GetInstance<AmbientConfig>().transitionHarshness = "0.01"; // a failsafe in case the player is stupid
 
-        ForestMorning.MaxVolume = GradientGlobals.SkyToUnderground * GradientGlobals.FromMorning * ModContent.GetInstance<AmbientConfig>().forestVolumes[0];
-        ForestDay.MaxVolume = GradientGlobals.SkyToUnderground * GradientGlobals.FromNoon * ModContent.GetInstance<AmbientConfig>().forestVolumes[1];
-        ForestEvening.MaxVolume = GradientGlobals.SkyToUnderground * GradientGlobals.FromEvening * ModContent.GetInstance<AmbientConfig>().forestVolumes[2];
-        ForestNight.MaxVolume = GradientGlobals.SkyToUnderground * GradientGlobals.FromMidnight * ModContent.GetInstance<AmbientConfig>().forestVolumes[3];
+        SetMaxVolume(ForestMorning, ForestMorningStream, GradientGlobals.SkyToUnderground * GradientGlobals.FromMorning * ModContent.GetInstance<AmbientConfig>().forestVolumes[0]);
+        SetMaxVolume(ForestDay, ForestDayStream, GradientGlobals.SkyToUnderground * GradientGlobals.FromNoon * ModContent.GetInstance<AmbientConfig>().forestVolumes[1]);
+        SetMaxVolume(ForestEvening, ForestEveningStream, GradientGlobals.SkyToUnderground * GradientGlobals.FromEvening * ModContent.GetInstance<AmbientConfig>().forestVolumes[2]);
+        SetMaxVolume(ForestNight, ForestNightStream, GradientGlobals.SkyToUnderground * GradientGlobals.FromMidnight * ModContent.GetInstance<AmbientConfig>().forestVolumes[3]);
 
         // added AllDayPartNight and AllNightPartDay to JungleDay and JungleNight at 11/22/2023 @ 9:33 AM
         JungleDay.MaxVolume = GradientGlobals.SkyToUnderground * GradientGlobals.AllDayPartNight * ModContent.GetInstance<AmbientConfig>().jungleVolumes[0] * 0.75f; // it's a bit loud.

@@ -139,10 +139,10 @@ public partial class TerrariaAmbience : Mod {
         _versCache = Main.versionNumber;
         Main.versionNumber += $", Terraria Ambience v{Version}";
 
-        // 服务端不需要任何音频资源。InitializeAllAmbienceToAvoidRuntimeOverhead 用的是
-        // DeferredLoad，请求会在随后的资源加载阶段真的把 24 条森林音轨解压进内存。
+        // 服务端不需要任何音频资源。
+        // 森林 24 首的预载（约 198 MB）现在挪到 AmbientHandler.Initialize：那里才读得到配置，
+        // 只有关闭流式时才需要预载（流式换曲由后台线程按需解码，不占主线程）。
         if (!Main.dedServ) {
-            AmbientHandler.InitializeAllAmbienceToAvoidRuntimeOverhead();
             AmbientPlayer.DetermineNonArmoryArmors();
             SlimeSounds.PopulateSlimes();
         }
@@ -328,9 +328,9 @@ public partial class TerrariaAmbience : Mod {
                     DefaultAmbientHandler.morningAmbienceForTheDay = reader.ReadInt32();
                     DefaultAmbientHandler.dayAmbienceForTheDay = reader.ReadInt32();
 
-                    DefaultAmbientHandler.ForestMorning.ChangeTrack(AmbientHandler.AmbientPath + 
+                    DefaultAmbientHandler.SetForestMorningTrack(AmbientHandler.AmbientPath + 
                         $"biome/forest/morning_{DefaultAmbientHandler.morningAmbienceForTheDay}");
-                    DefaultAmbientHandler.ForestDay.ChangeTrack(AmbientHandler.AmbientPath + 
+                    DefaultAmbientHandler.SetForestDayTrack(AmbientHandler.AmbientPath + 
                         $"biome/forest/day_{DefaultAmbientHandler.dayAmbienceForTheDay}");
 
                     SyncAmbienceSystem.curMorningAmb = DefaultAmbientHandler.morningAmbienceForTheDay;
@@ -354,9 +354,9 @@ public partial class TerrariaAmbience : Mod {
                     DefaultAmbientHandler.eveningAmbienceForTheDay = reader.ReadInt32();
                     DefaultAmbientHandler.nightAmbienceForTheDay = reader.ReadInt32();
 
-                    DefaultAmbientHandler.ForestEvening.ChangeTrack(AmbientHandler.AmbientPath + 
+                    DefaultAmbientHandler.SetForestEveningTrack(AmbientHandler.AmbientPath + 
                         $"biome/forest/evening_{DefaultAmbientHandler.eveningAmbienceForTheDay}");
-                    DefaultAmbientHandler.ForestNight.ChangeTrack(AmbientHandler.AmbientPath + 
+                    DefaultAmbientHandler.SetForestNightTrack(AmbientHandler.AmbientPath + 
                         $"biome/forest/night_{DefaultAmbientHandler.nightAmbienceForTheDay}");
 
                     SyncAmbienceSystem.curEveningAmb = DefaultAmbientHandler.eveningAmbienceForTheDay;
@@ -421,16 +421,16 @@ public partial class TerrariaAmbience : Mod {
                     var n = reader.ReadInt32();
 
                     if (m > 0)
-                    DefaultAmbientHandler.ForestMorning.ChangeTrack(AmbientHandler.AmbientPath +
+                    DefaultAmbientHandler.SetForestMorningTrack(AmbientHandler.AmbientPath +
                         $"biome/forest/morning_{m}");
                     if (d > 0)
-                    DefaultAmbientHandler.ForestDay.ChangeTrack(AmbientHandler.AmbientPath +
+                    DefaultAmbientHandler.SetForestDayTrack(AmbientHandler.AmbientPath +
                         $"biome/forest/day_{d}");
                     if (e > 0)
-                    DefaultAmbientHandler.ForestEvening.ChangeTrack(AmbientHandler.AmbientPath +
+                    DefaultAmbientHandler.SetForestEveningTrack(AmbientHandler.AmbientPath +
                         $"biome/forest/evening_{e}");
                     if (n > 0)
-                    DefaultAmbientHandler.ForestNight.ChangeTrack(AmbientHandler.AmbientPath +
+                    DefaultAmbientHandler.SetForestNightTrack(AmbientHandler.AmbientPath +
                         $"biome/forest/night_{n}");
 
                     SyncAmbienceSystem.curMorningAmb = m;
