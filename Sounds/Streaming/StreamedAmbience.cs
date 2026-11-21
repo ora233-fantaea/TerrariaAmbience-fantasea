@@ -166,7 +166,10 @@ public sealed class StreamedAmbience : IDisposable {
 
         if (_instance is null) {
             if (_volume > 0f) EnsureWorker();
-            if (_readyForPlayback && _worker is not null) StartPlayback();
+            if (_readyForPlayback && _worker is not null)
+                StartPlayback();
+            else if (_volume <= 0f && _worker is not null)
+                StopPlayback();   // 还没起播就淡出了，别把解码线程挂着
         }
         else {
             Pump();
