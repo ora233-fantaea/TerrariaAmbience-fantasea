@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Audio;
 using Terraria;
 using Terraria.Audio;
@@ -27,10 +28,41 @@ public class AudioTrackGuardSystem : ModSystem {
             return;
 
         On_LegacyAudioSystem.UpdateCommonTrack += SafeUpdateCommonTrack;
+        _mod = Mod;
+        On_Main.Update += Main_Update;
+        On_OGGAudioTrack.ReadAheadPutAChunkIntoTheBuffer += OggReadAhead;
     }
 
     public override void Unload() {
         On_LegacyAudioSystem.UpdateCommonTrack -= SafeUpdateCommonTrack;
+        On_Main.Update -= Main_Update;
+        On_OGGAudioTrack.ReadAheadPutAChunkIntoTheBuffer -= OggReadAhead;
+    }
+
+    // 注意：ModSystem.PostUpdateEverything 在主菜单里不会被调用（菜单只跑 Main.Update），
+    // 想在菜单里观察就得挂 Main.Update，和 MenuMusicGuard 一样。
+    void Main_Update(On_Main.orig_Update orig, Main self, GameTime gameTime) {
+        orig(self, gameTime);
+
+        if (Main.dedServ)
+            return;
+
+        float vol = Main.musicVolume;
+        if (_lastMusicVolume > 0.01f && vol <= 0.0001f)
+            Mod.Logger.Warn($"[AudioGuard] Main.musicVolume 由 {_lastMusicVolume:F3} 变为 0（curMusic={Main.curMusic}, newMusic={Main.newMusic}）。若是意外静音，重启游戏或在设置里重新拖动音乐音量即可恢复。");
+        _lastMusicVolume = vol;
+
+        bool debug = false;
+        try { debug = ModContent.GetInstance<AmbientConfig>().debugInterface; }
+        catch (Exception e) { Mod.Logger.Info($"[AudioProbe] config EX {e.GetType().Name}"); }
+
+        if (!_probeAliveOnce) {
+            _probeAliveOnce = true;
+            Mod.Logger.Info($"[AudioProbe] alive debug={debug} menu={Main.gameMenu} sys={Main.audioSystem?.GetType().Name}");
+        }
+
+        if (debug)
+            ProbeMusic();
     }
 
     float _lastMusicVolume = -1f;
@@ -38,22 +70,8 @@ public class AudioTrackGuardSystem : ModSystem {
     double _lastProbeAt = -10;
     int _lastProbeMusic = int.MinValue;
     bool _probeResolved;
+    static bool _probeAliveOnce;
     static Dictionary<int, string> _slotNames;
-
-    public override void PostUpdateEverything() {
-        if (Main.dedServ)
-            return;
-
-        // 若音量在运行时被外部置零（原版的静默失败路径，或用户手动拉到 0），留一条可追踪的记录。
-        float vol = Main.musicVolume;
-        if (_lastMusicVolume > 0.01f && vol <= 0.0001f)
-            Mod.Logger.Warn($"[AudioGuard] Main.musicVolume 由 {_lastMusicVolume:F3} 变为 0（curMusic={Main.curMusic}, newMusic={Main.newMusic}）。若是意外静音，重启游戏或在设置里重新拖动音乐音量即可恢复。");
-
-        _lastMusicVolume = vol;
-
-        if (ModContent.GetInstance<AmbientConfig>().debugInterface)
-            ProbeMusic();
-    }
 
     /// <summary>
     /// 排查"某个群系没有音乐"。三种可能分得很开：
@@ -62,8 +80,6 @@ public class AudioTrackGuardSystem : ModSystem {
     /// 同时打印槽位对应的资源名，便于直接判断是哪首曲子。
     /// </summary>
     void ProbeMusic() {
-        if (Main.gameMenu)
-            return;
         if (Main.audioSystem is not LegacyAudioSystem sys || sys.AudioTracks is null || Main.musicFade is null)
             return;
 
@@ -89,6 +105,55 @@ public class AudioTrackGuardSystem : ModSystem {
             $"track={(track is null ? "NULL" : track.GetType().Name)} " +
             $"playing={track?.IsPlaying} paused={track?.IsPaused} " +
             $"name={SlotName(next)}{VoiceExtra(track)}");
+    }
+
+    // 直接量“交给声部的样本是否为零”。这是唯一能把"解码没产出"与"输出被掐"分开的证据。
+    static Mod _mod;
+    static readonly System.Reflection.FieldInfo BufField = typeof(ASoundEffectBasedAudioTrack)
+        .GetField("_bufferToSubmit", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+    static int _bufChunks;
+    static double _bufSumSq;
+    static long _bufSamples;
+    static long _bufLastLog = -1;
+    static readonly Stopwatch BufWatch = new();
+
+    static void OggReadAhead(On_OGGAudioTrack.orig_ReadAheadPutAChunkIntoTheBuffer orig, Terraria.Audio.OGGAudioTrack self) {
+        orig(self);
+
+        try {
+            if (!ModContent.GetInstance<AmbientConfig>().debugInterface)
+                return;
+
+            if (BufField?.GetValue(self) is not byte[] buf)
+                return;
+
+            double sum = 0;
+            for (int i = 0; i + 1 < buf.Length; i += 2) {
+                short v = (short)(buf[i] | (buf[i + 1] << 8));
+                double f = v / 32768.0;
+                sum += f * f;
+            }
+            _bufSumSq += sum;
+            _bufSamples += buf.Length / 2;
+            _bufChunks++;
+
+            if (_bufLastLog < 0) {
+                BufWatch.Start();
+                _bufLastLog = 0;
+            }
+            long now = BufWatch.ElapsedMilliseconds;
+            if (now - _bufLastLog >= 4000 && _bufSamples > 0) {
+                _bufLastLog = now;
+                double rms = Math.Sqrt(_bufSumSq / _bufSamples);
+                _mod.Logger.Info($"[AudioBuf] rms={rms:0.00000} chunks={_bufChunks} samples={_bufSamples}");
+                _bufSumSq = 0;
+                _bufSamples = 0;
+                _bufChunks = 0;
+            }
+        }
+        catch {
+            // 诊断代码不允许影响播放。
+        }
     }
 
     static readonly System.Reflection.FieldInfo DynField = typeof(ASoundEffectBasedAudioTrack)
@@ -128,9 +193,30 @@ public class AudioTrackGuardSystem : ModSystem {
                 err = " faudio=EX";
             }
 
+            string filter = "filt=?";
+            string matrix = "dry=?";
+            try {
+                if (dyn.handle != IntPtr.Zero) {
+                    // 声部上挂的低通：Overhaul 的 LowPassFilteringSystem 会把
+                    // 1 - intensity*0.9（0.1~1.0）直接当 Hz 传给 FAudio。
+                    FAudio.FAudioVoice_GetFilterParameters(dyn.handle, out var fp);
+                    filter = $"filt={fp.Type}@{fp.Frequency:0.###}Hz/q={fp.OneOverQ:0.##}";
+
+                    var dev = SoundEffect.Device();
+                    int ch = (int?)ChannelsField?.GetValue(se) == 2 ? 2 : 1;
+                    var m = new float[ch * 2];
+                    FAudio.FAudioVoice_GetOutputMatrix(dyn.handle, dev.MasterVoice, (uint)ch, 2u, m);
+                    matrix = "dry=[" + string.Join(",", Array.ConvertAll(m, v => v.ToString("0.###"))) + "]";
+                }
+            }
+            catch {
+                filter = "filt=EX";
+            }
+
             return $" | dynVol={dyn.Volume:0.000} realVol={realVol:0.000} pending={dyn.PendingBufferCount}" +
                    $" queued={queued}" +
-                   $" rate={(int?)RateField?.GetValue(se)} ch={ChannelsField?.GetValue(se)}{err}";
+                   $" rate={(int?)RateField?.GetValue(se)} ch={ChannelsField?.GetValue(se)}{err}" +
+                   $" {filter} {matrix}";
         }
         catch (Exception e) {
             return $" | voice EX {e.GetType().Name}";
