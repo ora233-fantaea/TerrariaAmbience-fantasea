@@ -1,6 +1,6 @@
 # Terraria Ambience · 进度与缺陷台账
 
-> **这份文件是什么**：本会话把 TerrariaAmbience 的缺陷一条条落到「文件:行号 + 原文 + 后果 + 修法」的记录。它不替代 issue，也不代表已经改过代码——**本会话没有修改仓库里任何 `.cs` 文件**（只新增了本文件）。
+> **这份文件是什么**：本会话把 TerrariaAmbience 的缺陷一条条落到「文件:行号 + 原文 + 后果 + 修法」的记录。它不替代 issue；**§1–§9 是 2026-11-18 那次只读审计的结论，不代表代码已被修改**。`stream-1.4` 分支上的实际改动、验收数据与残留问题集中在 §11。
 >
 > **怎么读**：先看 §3 总表挑活，再看 §4 里对应 ID 的明细。§5 是上一轮结论的复核（有 2 处更正），§6 是「跟这个 mod 无关」的排除结论，§7 是只能实机验证的部分。
 
@@ -8,8 +8,8 @@
 |---|---|
 | 仓库（本 fork） | https://github.com/ora233-fantaea/TerrariaAmbience-fantasea |
 | 上游 | https://github.com/RighteousRyan1/TerrariaAmbience |
-| 分支 | `1.4`（默认分支，也是唯一分支） |
-| HEAD | `77291bd4784f2fcef2b1e2ed958c98de971a2981`（2026-09-02） |
+| 分支 | `1.4`（稳定） · `stream-1.4`（流式改造，2026-11-21） |
+| HEAD | `1.4` = `27bd268` · `stream-1.4` = `86c6f99`（2026-11-21 19:20） |
 | `build.txt` 版本 | `0.3.7.1`（与仓库 tag 无关：tag 只到 `v0.1.6.x`） |
 | 克隆方式 | `git clone` 全量，433 个 tracked 文件，227.8 MB，`git fsck` 无错，工作区干净 |
 | 审计日期 | 2026-11-18 |
@@ -806,3 +806,45 @@ S1 开工前的唯一前置是上面两条待定项；确认后从 `OggStream` �
 即可复用已编译 DLL 打包，产物 63.9 MB。直接 `-build` 会自己再编译一遍，那条路径上
 `Krafs.Publicizer` 不生效，报 25 个 FNA 内部成员错误。目录名必须是 `TerrariaAmbience`（内部名取文件夹名）；
 另注意 `-eac` 按**文件名在源目录下解析**，源目录里若躺着旧 DLL 会静默打进旧代码。
+
+### 11.12 当日收尾（2026-11-21 19:20）
+
+#### 提交
+
+| 提交 | 内容 |
+|---|---|
+| `732ec24` | S1–S2：`OggStream` 解码内核、`BlockQueue` 四槽环形交接、`StreamedAmbience` 播放器 |
+| `5a68066` | 流失败后退化为常驻 `SoundEffect`（第二层兜底） |
+| `1cca97e` | 未起播即淡出时释放解码线程 |
+| `2a87269` | 打包配方打通（`-eac` 复用已编译 DLL）+ 独立运行时实测记录 |
+| `ce6a277` | S3：森林四条迁移 + 免预载 |
+| `e197229` | S4：25 条全部迁移、`ModAmbience` 零引用、单集合 |
+| `7986d2f` | 主菜单双音乐修复 |
+| `7183252` `c986f2d` `2dfa51f` | `[AudioProbe]` 诊断（槽位名、真实时间节奏、FAudio 真实音量） |
+| `86c6f99` | “部分群系无音乐”定位为 TerrariaOverhaul 冲突 |
+
+#### 当日结论汇总
+
+| 项 | 结果 |
+|---|---|
+| 环境床 | 25 条全部流式，关闭流式走同一条常驻兜底 |
+| 工作集（主菜单） | 2,286.9 → **1,107.5 MB**（流式开启） / 1,778.4 MB（兜底） |
+| 离线回归 | 51 / 51 通过，逐帧与参考实现误差 0 |
+| 主菜单双音乐 | 已修复并复现验证（`fallback=True` 0 次、`slot50Playing=False`） |
+| 部分群系无音乐 | **非本模组问题**：TerrariaOverhaul 的 `EnableMusicPlaybackPositionPreservation` |
+
+#### 部署物（用户 `Mods` 目录）
+
+| 文件 | 说明 |
+|---|---|
+| `TerrariaAmbience_stream.tmod` | 生效中，含流式 + 双音乐修复 + `[AudioProbe]`（18:08 构建） |
+| `_versions\TerrariaAmbience_resident.tmod` | 无流式版（由 `1.4` 构建，**不含**双音乐修复） |
+| `_versions\TerrariaAmbience_stream-20261121-*.tmod` | 各阶段快照，留作对照 |
+| `_versions\TerrariaAmbience_old-20261121-0106.tmod` | 用户原包，未删 |
+
+#### 遗留
+
+1. **听感类验证**只能人工：森林昼夜换曲、雪原+雨、快速穿群系、退出世界回菜单。
+2. **设备热切换 / 最小化恢复 / 30 分钟长稳**未测。
+3. `_versions` 里的 resident 包由 `1.4` 构建，**不含** `7986d2f` 的菜单音乐修复；需要时另行出包。
+4. 关掉 `streamAmbientBeds` 时森林 24 首仍会预载（这是兜底路径的前提），属预期。
