@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using Microsoft.Xna.Framework.Audio;
 using Terraria;
 using Terraria.Audio;
 using Terraria.ModLoader;
@@ -87,7 +88,49 @@ public class AudioTrackGuardSystem : ModSystem {
         Mod.Logger.Info($"[AudioProbe] cur={Main.curMusic} new={next} fade={fade:0.00} " +
             $"track={(track is null ? "NULL" : track.GetType().Name)} " +
             $"playing={track?.IsPlaying} paused={track?.IsPaused} " +
-            $"name={SlotName(next)}");
+            $"name={SlotName(next)}{VoiceExtra(track)}");
+    }
+
+    static readonly System.Reflection.FieldInfo DynField = typeof(ASoundEffectBasedAudioTrack)
+        .GetField("_soundEffectInstance", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+    static readonly System.Reflection.FieldInfo RateField = typeof(ASoundEffectBasedAudioTrack)
+        .GetField("_sampleRate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+    static readonly System.Reflection.FieldInfo ChannelsField = typeof(ASoundEffectBasedAudioTrack)
+        .GetField("_channels", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+    /// <summary>
+    /// 声部内部状态：pending/queued 才是"缓冲区里到底有没有音频数据"的硬指标。
+    /// playing=True 但 pending=0 说明解码侧没产出，听感就是静音。
+    /// </summary>
+    static string VoiceExtra(IAudioTrack track) {
+        if (track is not ASoundEffectBasedAudioTrack se)
+            return string.Empty;
+
+        try {
+            if (DynField?.GetValue(se) is not DynamicSoundEffectInstance dyn)
+                return " | dyn=NULL";
+
+            uint queued = 0;
+            string getState = string.Empty;
+            try {
+                if (dyn.handle != IntPtr.Zero) {
+                    FAudio.FAudioSourceVoice_GetState(dyn.handle, out var state, 256u);
+                    queued = state.BuffersQueued;
+                }
+                else {
+                    getState = " handle=0";
+                }
+            }
+            catch {
+                getState = " getState=EX";
+            }
+
+            return $" | dynVol={dyn.Volume:0.000} pending={dyn.PendingBufferCount} queued={queued}" +
+                   $" rate={(int?)RateField?.GetValue(se)} ch={ChannelsField?.GetValue(se)}{getState}";
+        }
+        catch (Exception e) {
+            return $" | voice EX {e.GetType().Name}";
+        }
     }
 
     /// <summary>槽位 → "模组/资源路径"，只建一次。把 new=145 翻译成"这是哪首曲子"。</summary>
