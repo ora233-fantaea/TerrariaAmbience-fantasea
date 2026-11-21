@@ -1,5 +1,7 @@
 # Terraria Ambience
 
+简体中文 · [English](README.en.md)
+
 给《泰拉瑞亚》补环境音的模组：森林虫鸣、洞穴轰鸣、雨雪风声、按材质区分的脚步声，以及房间混响、遮挡与水下闷化。
 
 > **This is a maintained fork.** It fixes a batch of audio-lifetime, multiplayer and dedicated-server defects in
