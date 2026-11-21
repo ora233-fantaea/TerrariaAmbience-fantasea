@@ -61,6 +61,11 @@ public sealed class StreamedAmbience : IDisposable {
     private DynamicSoundEffectInstance _instance;
     private Thread _worker;
 
+    // 第二层兜底：流失败后在同一条音轨上退化为常驻 SoundEffect，
+    // 公开面不变，字段与音量梯度都不必改。只在真的坏了之后才付这份内存。
+    private SoundEffectInstance _fallback;
+    private bool _fallbackTried;
+
     // 后台线程状态（经 _readyForPlayback / _workerFailed 的释放语义发布给主线程）
     private BlockQueue _queue;
     private int _blockFrames;
@@ -109,9 +114,12 @@ public sealed class StreamedAmbience : IDisposable {
     /// <summary>变调量，每帧由上层写入，播放时应用到设备。</summary>
     public float Pitch { get; set; }
 
-    public bool IsPlaying => _instance is not null;
+    public bool IsPlaying => _instance is not null || _fallback is not null;
 
     public bool Failed => _failed;
+
+    /// <summary>是否已退化到常驻播放（流失败后的第二层兜底）。</summary>
+    public bool FallbackActive { get; private set; }
 
     public Exception LastError { get; private set; }
 
@@ -135,8 +143,10 @@ public sealed class StreamedAmbience : IDisposable {
         if (_path == path && !_failed) return;
 
         StopPlayback();
+        StopFallback();
         _path = path;
         _failed = false;
+        _fallbackTried = false;
         LastError = null;
         Underruns = 0;
     }
@@ -199,11 +209,11 @@ public sealed class StreamedAmbience : IDisposable {
     }
 
     private void ApplyInstanceState() {
-        var inst = _instance;
-        if (inst is null) return;
+        SoundEffectInstance target = _instance ?? _fallback;
+        if (target is null) return;
         try {
-            inst.Volume = Math.Clamp(_volume * Main.ambientVolume, 0f, 1f);
-            inst.Pitch = Pitch;
+            target.Volume = Math.Clamp(_volume * Main.ambientVolume, 0f, 1f);
+            target.Pitch = Pitch;
         }
         catch {
             // 设备回收期间设置属性会抛异常，下一帧会自行恢复或走失败路径。
@@ -382,6 +392,32 @@ public sealed class StreamedAmbience : IDisposable {
         _failed = true;
         LastError = e;
         try { StopPlayback(); } catch { }
+        TryResidentFallback();
+    }
+
+    /// <summary>
+    /// 第二层兜底：把这条音轨退化成常驻 SoundEffect，保证「宁可多占几 MB，也不能没声音」。
+    /// 只在失败后执行一次；再失败就保持静音，不递归。
+    /// </summary>
+    private void TryResidentFallback() {
+        if (_fallbackTried || Main.dedServ) return;
+        _fallbackTried = true;
+
+        try {
+            var asset = _mod.Assets.Request<SoundEffect>(_path, ReLogic.Content.AssetRequestMode.ImmediateLoad);
+            var inst = asset?.Value?.CreateInstance();
+            if (inst is null) return;
+
+            inst.IsLooped = true;
+            inst.Volume = Math.Clamp(_volume * Main.ambientVolume, 0f, 1f);
+            inst.Play();
+
+            _fallback = inst;
+            FallbackActive = true;
+        }
+        catch (Exception e) {
+            LastError = e;
+        }
     }
 
     private Stream OpenAssetStream(string path) {
@@ -406,12 +442,24 @@ public sealed class StreamedAmbience : IDisposable {
         return null;
     }
 
+    private void StopFallback() {
+        var fb = _fallback;
+        _fallback = null;
+        FallbackActive = false;
+        if (fb is null) return;
+
+        try { fb.Stop(); } catch { }
+        try { fb.Dispose(); } catch { }
+    }
+
     public void Dispose() {
         if (_disposed) return;
         _disposed = true;
         try { StopPlayback(); } catch { }
+        try { StopFallback(); } catch { }
         Active.Remove(this);
-        try { _wake.Dispose(); } catch { }
+        // 不释放 _wake：若存在 Join 超时的残留线程，释放会让它抛 ObjectDisposedException。
+        // 一个内核句柄交给终结器即可。
     }
 
     /// <summary>卸载模组时兜底：把所有活着的流停掉并释放设备句柄。</summary>

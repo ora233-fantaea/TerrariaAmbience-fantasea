@@ -165,6 +165,10 @@ Idle ──(volume > 0)──> 起后台线程 ──(预填 3 块)──> 主�
 
 失败即终止：`Failed` 后不再自动重试（避免故障循环），需 `ChangeTrack` 重置。
 
+失败时还会执行**第二层兜底**：在同一条音轨内部改用常驻 `SoundEffectInstance`（`IsLooped = true`），
+公开面不变，音量梯度与水下变调照旧生效。这样最坏情况只是多占一条音轨的内存，不会变成没声音。
+兜底只尝试一次；再失败就保持静音，不递归。
+
 ## 7. 怎么测
 
 1. 游戏内 设置 → 模组配置 → Terraria Ambience → `Streaming` → 勾选 `streamAmbientBeds`
