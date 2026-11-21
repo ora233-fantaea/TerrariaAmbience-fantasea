@@ -151,6 +151,10 @@ RoomSize         = totalSurfaces * gain * 0.5f;
 
 方案已写好但**未实施**：`docs/streaming-plan-2026-11-19.md`（P1 删预加载 249 MB → P2 懒加载 105 MB → P3 流式内核 → P4 流池 ≤4 → P5 全量 78 MB）。核心约束与已验证的 FNA 事实都记在那份文档里。
 
+2026-11-21 在 `stream-1.4` 分支完成**可行性验证**（`docs/streaming-verification-2026-11-21.md`），三条结论会改变实现：
+NVorbis 无「上混」重载（按文件声道数建实例即可，单声道原生支持）；`BufferNeeded` 确实每 tick 泵一次、但泵在 `DoUpdate` 之后且要求 `Play()` 前预填；
+39 条 biome 里 **10 条** 原样回绕会有可闻接缝（最差 `snow/windy` Δ=12254），交叉淡化是必需项而非保险，建议 256 帧。
+
 ---
 
 ## 7. 构建与验证方法（可复现）
@@ -189,6 +193,7 @@ dotnet tModLoader.dll -server -nosteam -savedirectory "<abs>/smoke" -modpath "<a
 | `docs/terraria-ambienceapi-analysis.md` | `TerrariaAmbienceAPI` 完整拆解（版本谱系、三类基元、耦合方式、A1–A12） |
 | `docs/fix-report-2026-11-19.md` | 第一批修复的逐条说明与验证，§8 记录室内脚步震颤的诊断链 |
 | `docs/streaming-plan-2026-11-19.md` | 流式改造的分阶段方案与 FNA/NVorbis 事实核查 |
+| `docs/streaming-verification-2026-11-21.md` | 流式可行性验证：实机解码、接缝量化、API 修正清单 |
 | `docs/STATUS.md` | 本文件 |
 | `dist/*.tmod` | 构建产物（**已在 `.gitignore` 中**，不进库） |
 | `.home/qa/**` | 隔离测试现场（**已忽略**，可整目录删除，不影响仓库与游戏） |
