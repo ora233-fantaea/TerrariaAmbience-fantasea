@@ -36,8 +36,18 @@ public sealed class StreamedAmbience : IDisposable {
 
     private const int WorkerJoinTimeoutMs = 500;
 
-    /// <summary>同时活跃的流上限。超过后新的音轨保持静默，等有槽位再起。</summary>
-    public static int MaxActiveStreams = 4;
+    /// <summary>
+    /// 同时活跃的流上限。单条流常驻约 75 KB（48 kHz 立体声、4 块 × 100 ms），
+    /// 所以上限给得宽一些：8 条也才 600 KB，而现实中同时最多约 5 条
+    /// （森林昼夜交界 2 条 + 风 2 条 + 雨 1 条）。超过后新的音轨保持静默，等槽位再起。
+    /// </summary>
+    public static int MaxActiveStreams = 8;
+
+    /// <summary>
+    /// 配置关闭流式时置真：所有音轨不启动解码线程，直接走常驻兜底。
+    /// 这是唯一的一条「关掉流式」路径，不额外维护第二套实现。
+    /// </summary>
+    public static bool ForceResident;
 
     private static readonly List<StreamedAmbience> Active = new();
 
@@ -121,6 +131,9 @@ public sealed class StreamedAmbience : IDisposable {
     /// <summary>是否已退化到常驻播放（流失败后的第二层兜底）。</summary>
     public bool FallbackActive { get; private set; }
 
+    /// <summary>因槽位不足被拒绝启动的次数。</summary>
+    public long SlotRejections { get; private set; }
+
     public Exception LastError { get; private set; }
 
     public long Underruns { get; private set; }
@@ -135,7 +148,8 @@ public sealed class StreamedAmbience : IDisposable {
     public string Describe() =>
         $"流 {Name}: vol={_volume:0.###} max={_maxVolume:0.###} " +
         $"{(IsPlaying ? "playing" : _failed ? "failed" : "idle")} " +
-        $"sq={_queue?.ReadyCount ?? 0}/{_queue?.FreeCount ?? 0} under={Underruns} seam={SeamFrames}";
+        $"sq={_queue?.ReadyCount ?? 0}/{_queue?.FreeCount ?? 0} under={Underruns} " +
+        $"seam={SeamFrames} reject={SlotRejections}";
 
     /// <summary>切换曲目。会停掉当前流，下一次 Update 按新路径重开。</summary>
     public void ChangeTrack(string path) {
@@ -157,7 +171,12 @@ public sealed class StreamedAmbience : IDisposable {
 
         ApplyVolumeEnvelope();
 
-        if (_failed) return;
+        // 全局关闭流式，或本条已经失败：按需加载常驻副本，绝不启动解码线程。
+        if (ForceResident || _failed) {
+            if (_fallback is null && _volume > 0f)
+                TryResidentFallback();
+            return;
+        }
 
         if (_workerFailed) {
             Fail(_workerError ?? new InvalidOperationException("解码线程异常退出。"));
@@ -256,6 +275,7 @@ public sealed class StreamedAmbience : IDisposable {
         if (_worker is not null) return;
 
         if (Active.Count >= MaxActiveStreams) {
+            SlotRejections++;
             TotalSlotRejections++;
             return;
         }
@@ -395,7 +415,7 @@ public sealed class StreamedAmbience : IDisposable {
         _failed = true;
         LastError = e;
         try { StopPlayback(); } catch { }
-        TryResidentFallback();
+        // 兜底实例延迟到「真的要出声」时再加载，避免启动瞬间把 25 条全解压一遍。
     }
 
     /// <summary>

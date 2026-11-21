@@ -79,9 +79,6 @@ internal class MethodDetours {
         if (viewMode >= 0) {
             column1 += $"Ambience Name/Volume:";
             foreach (var amb in TerrariaAmbience.DefaultAmbientHandler.Ambiences) {
-                column1 += $"\n{amb.Name}: {amb.Volume:0.###}";
-            }
-            foreach (var amb in TerrariaAmbience.DefaultAmbientHandler.StreamedAmbiences) {
                 column1 += $"\n{amb.Name}: {amb.Volume:0.###} (u{amb.Underruns})";
             }
 

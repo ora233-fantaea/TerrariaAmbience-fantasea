@@ -300,8 +300,53 @@ ModConfig 文件名是 `<模组名>_<配置类名>.json`，放在 `<savedir>/tMo
 - 4 条流同时活跃时的欠载计数，需要走到森林昼夜交界并叠加风雪；
 - 真机听感、设备热切换、长稳，同 §8.1。
 
-## 11. 下一动作（S4）
+## 11. S4：全部迁移与依赖收敛
 
-1. 其余 biome（`Desert` / `Snow*` / `Jungle*` / `Beach*` / `Evils*` / `Cavern` / `Hell`）逐条迁移。
-2. `environment`（5）+ `rain`（3）是否纳入，按 §11.8 的结论——只多省 23.6 MB，建议不迁。
-3. 全部迁完后删除 `Ambiences` 与 `ModAmbience` 依赖，`InitializeAllAmbienceToAvoidRuntimeOverhead` 整段作废。
+### 11.1 改动
+
+| 项 | 内容 |
+|---|---|
+| 字段 | 25 条环境床的字段类型统一为 `StreamedAmbience`，删除 5 个孪生字段 |
+| 集合 | `Ambiences` 改为 `List<StreamedAmbience>`，删除 `StreamedAmbiences` |
+| 初始化 | 两处 `if (StreamingEnabled) ... else ...` 收成单一路径，25 条全部 `new StreamedAmbience` |
+| 换曲 | 删除 `SetForestXTrack` 与 `SwitchTrack`，调用点回到直接的 `ForestX.ChangeTrack` |
+| 变调 | `Desert.SoundInstance.Pitch` 等改为 `Desert.Pitch` 属性，起播前后都成立 |
+| 关闭流式 | 不再保留第二套实现：`StreamedAmbience.ForceResident = true`，所有音轨走「常驻兜底」同一条代码 |
+| 上限 | `MaxActiveStreams` 4 → 8（单条流约 75 KB，8 条也才 600 KB） |
+
+`ModAmbience` 在代码里已经没有任何引用，只剩注释里的说明。
+`TerrariaAmbienceAPI` 仍是硬依赖，但用途只剩脚步/配置等，与环境床无关。
+
+### 11.2 关闭流式时到底发生什么
+
+`AmbientConfig.streamAmbientBeds = false` 不再切换实现，而是：
+
+1. `ForceResident = true`；
+2. 森林 24 首仍然预载（`InitializeAllAmbienceToAvoidRuntimeOverhead`）；
+3. 每条音轨在「第一次真的要出声」时，用 `Assets.Request<SoundEffect>(ImmediateLoad)` 取常驻副本。
+
+因为预载已经把它们读进来了，这一步只是拿缓存，没有解码开销，所以换曲不会卡。
+与 1.4 的差别只在「25 条实例不在初始化时全部创建」，内存反而更省。
+
+### 11.3 独立客户端实测（同一台机、同一个包，只改一个开关）
+
+| 配置 | 工作集（主菜单） | 日志 |
+|---|---|---|
+| 流式开启（默认） | **1,107.5 MB** | `Ambience beds: 25 tracks, streaming=enabled` |
+| 流式关闭（兜底） | 1,778.4 MB | `Ambience beds: 25 tracks, streaming=disabled (resident fallback)` |
+
+对照此前两次：S3（5 条流式 + 20 条常驻 + 预载）为 1,370.1 MB；S2（25 条常驻 + 预载）为 2,286.9 MB。
+
+即相对未改造前，主菜单工作集下降约 **1.18 GB**；相对 S3 再降约 **263 MB**。
+两种配置下模组都正常加载、零异常。
+
+### 11.4 仍未验证
+
+- 真实游玩下的群系巡游与换曲听感（听不到，只能你验）；
+- 8 条流上限的实际并发（现实中约 5 条）；
+- 设备热切换、最小化恢复、30 分钟长稳。
+
+### 11.5 后续可做
+
+1. 把 `AmbientConfig` 里的 `streamAmbientBeds` 说明写进 README（目前只写在代码注释里）。
+2. 若确认稳定，删掉 `InitializeAllAmbienceToAvoidRuntimeOverhead` 与 `using TerrariaAmbienceAPI` 里已无用的部分。

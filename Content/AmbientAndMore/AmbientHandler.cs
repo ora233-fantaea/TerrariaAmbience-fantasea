@@ -1,6 +1,5 @@
 using Terraria;
 using Terraria.ModLoader;
-using TerrariaAmbienceAPI.Common;
 using TerrariaAmbience.Common.Systems;
 using TerrariaAmbience.Helpers;
 using TerrariaAmbience.Core;
@@ -26,88 +25,63 @@ public class AmbientHandler {
 
     public float TransitionHarshness;
 
-    public ModAmbience BreezeLight;
-    public ModAmbience BreezeHeavy;
+    public StreamedAmbience BreezeLight;
+    public StreamedAmbience BreezeHeavy;
 
-    public ModAmbience ForestMorning;
-    public ModAmbience ForestDay;
-    public ModAmbience ForestEvening;
-    public ModAmbience ForestNight;
+    public StreamedAmbience ForestMorning;
+    public StreamedAmbience ForestDay;
+    public StreamedAmbience ForestEvening;
+    public StreamedAmbience ForestNight;
 
-    // 森林四条的流式版本，与上面的常驻字段二选一，由 StreamingEnabled 在初始化时决定。
-    // 昼夜切换靠 ChangeTrack 换曲，流式实现里这条路是「停掉重开」，起播在工作线程上，不卡主线程。
-    public StreamedAmbience ForestMorningStream;
-    public StreamedAmbience ForestDayStream;
-    public StreamedAmbience ForestEveningStream;
-    public StreamedAmbience ForestNightStream;
+    public StreamedAmbience Desert;
 
-    public ModAmbience Desert;
-
-    public ModAmbience SnowDay;
-    public ModAmbience SnowNight;
+    public StreamedAmbience SnowDay;
+    public StreamedAmbience SnowNight;
     // when it's snowy AND windy!
-    public ModAmbience SnowAggro;
-    // 流式版本，与 SnowAggro 二选一：由 AmbientConfig.streamAmbientBeds 在初始化时决定。
-    public StreamedAmbience SnowAggroStream;
+    public StreamedAmbience SnowAggro;
 
-    public ModAmbience JungleDay;
-    public ModAmbience JungleNight;
-    public ModAmbience JungleUndergroundDay; // aka swamp
-    public ModAmbience JungleUndergroundNight;
+    public StreamedAmbience JungleDay;
+    public StreamedAmbience JungleNight;
+    public StreamedAmbience JungleUndergroundDay; // aka swamp
+    public StreamedAmbience JungleUndergroundNight;
 
-    public ModAmbience BeachCalm;
+    public StreamedAmbience BeachCalm;
     // when it's watery AND windy!
-    public ModAmbience BeachAggro;
+    public StreamedAmbience BeachAggro;
 
-    public ModAmbience EvilsCrimson;
-    public ModAmbience EvilsCorruption;
+    public StreamedAmbience EvilsCrimson;
+    public StreamedAmbience EvilsCorruption;
 
-    public ModAmbience CavernLayer;
+    public StreamedAmbience CavernLayer;
 
-    public ModAmbience Hell;
+    public StreamedAmbience Hell;
 
-    public ModAmbience Underwater;
-    public ModAmbience UnderwaterDeep;
+    public StreamedAmbience Underwater;
+    public StreamedAmbience UnderwaterDeep;
 
-    public ModAmbience RainLight;
-    public ModAmbience RainMed;
-    public ModAmbience RainHeavy;
+    public StreamedAmbience RainLight;
+    public StreamedAmbience RainMed;
+    public StreamedAmbience RainHeavy;
 
-    public List<ModAmbience> Ambiences { get; private set; }
+    /// <summary>全部 25 条环境床。S4 之后只有流式一种实现。</summary>
+    public List<StreamedAmbience> Ambiences { get; private set; } = [];
 
-    // 已迁移到流式的音轨。与 Ambiences 分开维护，是为了在不改变 1.4 行为的前提下逐条替换。
-    public List<StreamedAmbience> StreamedAmbiences { get; private set; } = [];
-
-    /// <summary>是否启用流式环境床。配置尚未注册时按关闭处理。</summary>
+    /// <summary>
+    /// 是否启用流式。关闭时不换实现，而是让每条音轨立刻走「常驻 SoundEffect」的兜底路径
+    /// （与流解码失败时的降级是同一条代码），所以不存在第二套维护面。
+    /// </summary>
     public static bool StreamingEnabled {
         get {
             try {
                 return ModContent.GetInstance<AmbientConfig>().streamAmbientBeds;
             }
             catch {
-                return false;
+                return true;
             }
         }
     }
 
-    /// <summary>同一音轨的常驻/流式两种实现二选一，赋值时两处都写一遍太啰嗦，收在这里。</summary>
-    private static void SetMaxVolume(ModAmbience resident, StreamedAmbience streamed, float value) {
-        if (resident is not null) resident.MaxVolume = value;
-        if (streamed is not null) streamed.MaxVolume = value;
-    }
-
-    private static void SwitchTrack(ModAmbience resident, StreamedAmbience streamed, string path) {
-        if (resident is not null) resident.ChangeTrack(path);
-        if (streamed is not null) streamed.ChangeTrack(path);
-    }
-
-    // 森林四条的换曲入口。上层（网络包、黎明黄昏）不应该关心当前是哪一种实现。
-    public void SetForestMorningTrack(string path) => SwitchTrack(ForestMorning, ForestMorningStream, path);
-    public void SetForestDayTrack(string path) => SwitchTrack(ForestDay, ForestDayStream, path);
-    public void SetForestEveningTrack(string path) => SwitchTrack(ForestEvening, ForestEveningStream, path);
-    public void SetForestNightTrack(string path) => SwitchTrack(ForestNight, ForestNightStream, path);
-
-    // since ModAmbience can't really do campfire stuff. lul.
+    // 营火声不走环境床：它要求同 tick 出声，常驻 SoundEffect 更合适。
     // well it technically could...
     public SoundEffectInstance CampfireCrackleInstance;
 
@@ -142,25 +116,6 @@ public class AmbientHandler {
             return IsStrictlySurface;
         });
 
-        if (StreamingEnabled) {
-            ForestMorningStream = new(mod, AmbientPath + $"biome/forest/morning_{Main.rand.Next(1, NUM_MORNING_AMBIENCE + 1)}", "ForestMorning", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
-                return InAForest;
-            });
-            ForestDayStream = new(mod, AmbientPath + $"biome/forest/day_{Main.rand.Next(1, NUM_DAY_AMBIENCE + 1)}", "ForestDay", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
-                return InAForest && Main.dayTime;
-            });
-            ForestEveningStream = new(mod, AmbientPath + $"biome/forest/evening_{Main.rand.Next(1, NUM_EVENING_AMBIENCE + 1)}", "ForestEvening", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
-                return InAForest;
-            });
-            ForestNightStream = new(mod, AmbientPath + $"biome/forest/night_{Main.rand.Next(1, NUM_NIGHT_AMBIENCE + 1)}", "ForestNight", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
-                return InAForest && !Main.dayTime;
-            });
-            StreamedAmbiences.Add(ForestMorningStream);
-            StreamedAmbiences.Add(ForestDayStream);
-            StreamedAmbiences.Add(ForestEveningStream);
-            StreamedAmbiences.Add(ForestNightStream);
-        }
-        else {
             ForestMorning = new(mod, AmbientPath + $"biome/forest/morning_{Main.rand.Next(1, NUM_MORNING_AMBIENCE + 1)}", "ForestMorning", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
                 return InAForest;
             });
@@ -173,7 +128,6 @@ public class AmbientHandler {
             ForestNight = new(mod, AmbientPath + $"biome/forest/night_{Main.rand.Next(1, NUM_NIGHT_AMBIENCE + 1)}", "ForestNight", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
                 return InAForest && !Main.dayTime;
             });
-        }
 
         CavernLayer = new(mod, AmbientPath + "biome/cavern/wind", "CavernLayer", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
             var player = Main.LocalPlayer;
@@ -190,17 +144,9 @@ public class AmbientHandler {
         SnowNight = new(mod, AmbientPath + "biome/snow/night", "SnowNight", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
             return InATundra && !Main.dayTime;
         });
-        if (StreamingEnabled) {
-            SnowAggroStream = new(mod, AmbientPath + "biome/snow/windy", "SnowAggro", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
-                return InATundra && Main.raining;
-            });
-            StreamedAmbiences.Add(SnowAggroStream);
-        }
-        else {
             SnowAggro = new(mod, AmbientPath + "biome/snow/windy", "SnowAggro", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
                 return InATundra && Main.raining;
             });
-        }
         EvilsCrimson = new(mod, AmbientPath + "biome/crimson/rumbles", "EvilsCrimson", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
             return InACrimson;
         });
@@ -253,23 +199,23 @@ public class AmbientHandler {
             return !InATundra;
         });
 
-        // 关闭流式时必须预载：ModAmbience.ChangeTrack 是 ImmediateLoad，没预载会在黎明/黄昏
-        // 换曲的那一帧同步解压 8 MB 级的 ogg，造成可见卡顿。
-        // 开启流式则跳过这一步，24 首森林曲目一共省下约 198 MB。
+        // 关闭流式不换实现，只把每条音轨钉死在兜底的常驻路径上（ImmediateLoad）。
+        // 那条路必须预载，否则黎明/黄昏换曲那一帧会同步解压 8 MB 级的 ogg；
+        // 开启流式则跳过，24 首森林曲目一共省下约 198 MB。
+        StreamedAmbience.ForceResident = !StreamingEnabled;
+
         if (!StreamingEnabled)
             InitializeAllAmbienceToAvoidRuntimeOverhead();
 
         // finally, we add all of them via reflection because manual labor is stupid.
         Ambiences = [];
-        foreach (var fld in GetType().GetFields().Where(x => x.FieldType.TypeHandle.Equals(typeof(ModAmbience).TypeHandle))) {
-            // 开启流式后对应字段保持 null，必须过滤，否则下游每帧解引用会 NRE。
-            if (fld.GetValue(this) is ModAmbience amb)
+        foreach (var fld in GetType().GetFields().Where(x => x.FieldType.TypeHandle.Equals(typeof(StreamedAmbience).TypeHandle))) {
+            if (fld.GetValue(this) is StreamedAmbience amb)
                 Ambiences.Add(amb);
         }
 
-        mod.Logger.Info($"Ambience streaming: {(StreamedAmbiences.Count > 0
-            ? $"enabled, {StreamedAmbiences.Count} streamed / {Ambiences.Count} resident"
-            : $"disabled, {Ambiences.Count} resident")}");
+        mod.Logger.Info($"Ambience beds: {Ambiences.Count} tracks, " +
+                        $"streaming={(StreamedAmbience.ForceResident ? "disabled (resident fallback)" : "enabled")}");
     }
 
     public static void AddModBiomeTo(Mod mod, List<ModBiome> registry, params string[] biomeInternalNames) {
@@ -305,7 +251,7 @@ public class AmbientHandler {
     public void HandleEnterWorld() {
         if (Main.raining) {
             dayAmbienceForTheDay = AmbienceID.Day_Quiet;
-            SetForestDayTrack(AmbientPath + $"biome/forest/day_{dayAmbienceForTheDay}");
+            ForestDay.ChangeTrack(AmbientPath + $"biome/forest/day_{dayAmbienceForTheDay}");
         }
     }
     public static void InitializeAllAmbienceToAvoidRuntimeOverhead() {
@@ -332,8 +278,8 @@ public class AmbientHandler {
         SyncAmbienceSystem.curEveningAmb = eveningAmbienceForTheDay;
         SyncAmbienceSystem.curNightAmb = nightAmbienceForTheDay;
 
-        SetForestEveningTrack(AmbientPath + $"biome/forest/evening_{eveningAmbienceForTheDay}");
-        SetForestNightTrack(AmbientPath + $"biome/forest/night_{nightAmbienceForTheDay}");
+        ForestEvening.ChangeTrack(AmbientPath + $"biome/forest/evening_{eveningAmbienceForTheDay}");
+        ForestNight.ChangeTrack(AmbientPath + $"biome/forest/night_{nightAmbienceForTheDay}");
     }
     public void RandomizeDawnTracks() {
         morningAmbienceForTheDay = Main.rand.Next(1, NUM_MORNING_AMBIENCE + 1);
@@ -344,8 +290,8 @@ public class AmbientHandler {
         SyncAmbienceSystem.curMorningAmb = morningAmbienceForTheDay;
         SyncAmbienceSystem.curDayAmb = dayAmbienceForTheDay;
 
-        SetForestDayTrack(AmbientPath + $"biome/forest/day_{dayAmbienceForTheDay}");
-        SetForestMorningTrack(AmbientPath + $"biome/forest/morning_{morningAmbienceForTheDay}");
+        ForestDay.ChangeTrack(AmbientPath + $"biome/forest/day_{dayAmbienceForTheDay}");
+        ForestMorning.ChangeTrack(AmbientPath + $"biome/forest/morning_{morningAmbienceForTheDay}");
     }
     public void Update() {
         if (Main.dedServ)
@@ -365,33 +311,18 @@ public class AmbientHandler {
                 amb.MaxVolume = 0f; // no ambience in the main menu.
             }
 
-            // SoundInstance 在资源缺失/加载失败时会是 null（API 的 ChangeTrack 明确会这么赋值），
-            // 这里每 tick 无条件解引用会让整个 Main.Update 每帧抛一次 NRE。
-            var instance = amb.SoundInstance;
-            if (instance is not null)
-                instance.Pitch = 0f;
+            amb.Pitch = 0f;
 
             if (!isHarshOk) continue;
             TransitionHarshness = harshness;
             amb.VolumeStep = harshness;
         }
 
-        foreach (var amb in StreamedAmbiences) {
-            if (Main.gameMenu) {
-                amb.PlayInMenu = true;
-                amb.MaxVolume = 0f;
-            }
-
-            amb.Pitch = 0f;
-
-            if (!isHarshOk) continue;
-            amb.VolumeStep = harshness;
-        }
 
         if (Main.gameMenu) {
             // 主菜单里 MaxVolume 已被压到 0，这里继续推进包络让它们淡出并停机，
             // 否则退出世界后流会以最后的音量一直响下去。
-            foreach (var amb in StreamedAmbiences)
+            foreach (var amb in Ambiences)
                 amb.Update();
             return;
         }
@@ -411,10 +342,10 @@ public class AmbientHandler {
         if (!isHarshOk)
             ModContent.GetInstance<AmbientConfig>().transitionHarshness = "0.01"; // a failsafe in case the player is stupid
 
-        SetMaxVolume(ForestMorning, ForestMorningStream, GradientGlobals.SkyToUnderground * GradientGlobals.FromMorning * ModContent.GetInstance<AmbientConfig>().forestVolumes[0]);
-        SetMaxVolume(ForestDay, ForestDayStream, GradientGlobals.SkyToUnderground * GradientGlobals.FromNoon * ModContent.GetInstance<AmbientConfig>().forestVolumes[1]);
-        SetMaxVolume(ForestEvening, ForestEveningStream, GradientGlobals.SkyToUnderground * GradientGlobals.FromEvening * ModContent.GetInstance<AmbientConfig>().forestVolumes[2]);
-        SetMaxVolume(ForestNight, ForestNightStream, GradientGlobals.SkyToUnderground * GradientGlobals.FromMidnight * ModContent.GetInstance<AmbientConfig>().forestVolumes[3]);
+        ForestMorning.MaxVolume = GradientGlobals.SkyToUnderground * GradientGlobals.FromMorning * ModContent.GetInstance<AmbientConfig>().forestVolumes[0];
+        ForestDay.MaxVolume = GradientGlobals.SkyToUnderground * GradientGlobals.FromNoon * ModContent.GetInstance<AmbientConfig>().forestVolumes[1];
+        ForestEvening.MaxVolume = GradientGlobals.SkyToUnderground * GradientGlobals.FromEvening * ModContent.GetInstance<AmbientConfig>().forestVolumes[2];
+        ForestNight.MaxVolume = GradientGlobals.SkyToUnderground * GradientGlobals.FromMidnight * ModContent.GetInstance<AmbientConfig>().forestVolumes[3];
 
         // added AllDayPartNight and AllNightPartDay to JungleDay and JungleNight at 11/22/2023 @ 9:33 AM
         JungleDay.MaxVolume = GradientGlobals.SkyToUnderground * GradientGlobals.AllDayPartNight * ModContent.GetInstance<AmbientConfig>().jungleVolumes[0] * 0.75f; // it's a bit loud.
@@ -426,18 +357,13 @@ public class AmbientHandler {
         SnowDay.MaxVolume = GradientGlobals.SkyToUnderground * GradientGlobals.WindSpeedsLow * ModContent.GetInstance<AmbientConfig>().snowVolume;
         SnowNight.MaxVolume = GradientGlobals.SkyToUnderground * GradientGlobals.WindSpeedsLow * ModContent.GetInstance<AmbientConfig>().snowVolume;
         var snowAggroMax = GradientGlobals.SkyToUnderground * GradientGlobals.RainIntensityForSnow * GradientGlobals.WindSpeedsHigh * ModContent.GetInstance<AmbientConfig>().snowVolume;
-        if (SnowAggro is not null)
-            SnowAggro.MaxVolume = snowAggroMax;
-        if (SnowAggroStream is not null)
-            SnowAggroStream.MaxVolume = snowAggroMax;
+        SnowAggro.MaxVolume = snowAggroMax;
         // make quieter / bandpass filter when inside
         Desert.MaxVolume = GradientGlobals.SkyToUnderground * ModContent.GetInstance<AmbientConfig>().desertVolume;
 
-        if (Desert.SoundInstance != null) {
-            Desert.SoundInstance.Pitch = 
-                (Main.dayTime ? 0f : -0.1f) - 
-                (InACrimson || InACorruption ? 0.5f : 0f);
-        }
+        Desert.Pitch =
+            (Main.dayTime ? 0f : -0.1f) -
+            (InACrimson || InACorruption ? 0.5f : 0f);
         if (!Underwater.AreConditionsMet) Underwater.VolumeStep = TransitionHarshness * 2.5f;
         else Underwater.VolumeStep = TransitionHarshness;
 
@@ -499,27 +425,14 @@ public class AmbientHandler {
 
             // 原写法是 Pitch -= -0.05f，等价于 +0.05（水下反而升调），
             // 而且它依赖上一轮循环把 Pitch 归零才不至于逐帧累加。
-            var instance = amb.SoundInstance;
-            if (instance is not null)
-                instance.Pitch = -0.05f;
-
-            amb.MaxVolume *= 0.1f;
-        }
-
-        // 与上面的常驻循环等价，只是类型不同。两套都保留，便于逐条迁移与随时回退。
-        for (int i = 0; i < StreamedAmbiences.Count; i++) {
-            var amb = StreamedAmbiences[i];
-            amb.MaxVolume *= pl.InRoomAmbientMultiplier * overallVolume;
-
-            if (!isUnderwater) continue;
-
             amb.Pitch = -0.05f;
+
             amb.MaxVolume *= 0.1f;
         }
 
-        // 推进流式的状态机：打开 → 预填 → 起播 → 补块 → 停机。
-        for (int i = 0; i < StreamedAmbiences.Count; i++)
-            StreamedAmbiences[i].Update();
+        // 推进状态机：打开 → 预填 → 起播 → 补块 → 停机。
+        for (int i = 0; i < Ambiences.Count; i++)
+            Ambiences[i].Update();
     }
 }
 public static class AmbienceID {

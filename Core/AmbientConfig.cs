@@ -45,10 +45,11 @@ public class AmbientConfig : ModConfig {
 
     [Header("Streaming")]
 
-    // 流式环境床（实验）。开启后环境床改为边解码边播放，常驻内存从数百 MB 降到个位数。
-    // 需要在初始化阶段决定字段类型，所以改动后必须重载模组。
+    // 流式环境床。开启后环境床边解码边播放，常驻内存从数百 MB 降到个位数。
+    // 关闭时不换实现，而是让每条音轨立刻退化为常驻 SoundEffect（与解码失败时的兜底同一条路），
+    // 等价于 1.4 的行为。需要在初始化阶段定型，改动后必须重载模组。
     [ReloadRequired]
-    [DefaultValue(false)]
+    [DefaultValue(true)]
     public bool streamAmbientBeds;
 
     [Header("Debugging")]

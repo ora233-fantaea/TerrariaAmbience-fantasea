@@ -780,7 +780,11 @@ S1 开工前的唯一前置是上面两条待定项；确认后从 `OggStream` �
 **打包已打通**：`dotnet build -p:BuildMod=false` 后用 `-eac` 复用 DLL 打包；目录须叫 `TerrariaAmbience`；
 产物 63,981,018 B，服务器与独立客户端均加载通过。配方见 `docs/streaming-impl-2026-11-21.md` §9。
 
-**下一步**：S4（其余 biome 逐条迁移 + 收敛掉 `Ambiences`）。
+**S4 已完成**：25 条环境床全部改为 `StreamedAmbience`，`Ambiences` 收敛为单集合，
+`ModAmbience` 在代码里零引用；关闭流式改为「全部走常驻兜底」而非保留第二套实现。
+独立客户端实测：开启 1,107.5 MB / 关闭 1,778.4 MB（此前基线 2,286.9 MB），零异常。
+
+**下一步**：真机听感与长稳验证；README 补配置说明。
 
 ### 11.11 已知环境问题
 

@@ -328,9 +328,9 @@ public partial class TerrariaAmbience : Mod {
                     DefaultAmbientHandler.morningAmbienceForTheDay = reader.ReadInt32();
                     DefaultAmbientHandler.dayAmbienceForTheDay = reader.ReadInt32();
 
-                    DefaultAmbientHandler.SetForestMorningTrack(AmbientHandler.AmbientPath + 
+                    DefaultAmbientHandler.ForestMorning.ChangeTrack(AmbientHandler.AmbientPath + 
                         $"biome/forest/morning_{DefaultAmbientHandler.morningAmbienceForTheDay}");
-                    DefaultAmbientHandler.SetForestDayTrack(AmbientHandler.AmbientPath + 
+                    DefaultAmbientHandler.ForestDay.ChangeTrack(AmbientHandler.AmbientPath + 
                         $"biome/forest/day_{DefaultAmbientHandler.dayAmbienceForTheDay}");
 
                     SyncAmbienceSystem.curMorningAmb = DefaultAmbientHandler.morningAmbienceForTheDay;
@@ -354,9 +354,9 @@ public partial class TerrariaAmbience : Mod {
                     DefaultAmbientHandler.eveningAmbienceForTheDay = reader.ReadInt32();
                     DefaultAmbientHandler.nightAmbienceForTheDay = reader.ReadInt32();
 
-                    DefaultAmbientHandler.SetForestEveningTrack(AmbientHandler.AmbientPath + 
+                    DefaultAmbientHandler.ForestEvening.ChangeTrack(AmbientHandler.AmbientPath + 
                         $"biome/forest/evening_{DefaultAmbientHandler.eveningAmbienceForTheDay}");
-                    DefaultAmbientHandler.SetForestNightTrack(AmbientHandler.AmbientPath + 
+                    DefaultAmbientHandler.ForestNight.ChangeTrack(AmbientHandler.AmbientPath + 
                         $"biome/forest/night_{DefaultAmbientHandler.nightAmbienceForTheDay}");
 
                     SyncAmbienceSystem.curEveningAmb = DefaultAmbientHandler.eveningAmbienceForTheDay;
@@ -421,16 +421,16 @@ public partial class TerrariaAmbience : Mod {
                     var n = reader.ReadInt32();
 
                     if (m > 0)
-                    DefaultAmbientHandler.SetForestMorningTrack(AmbientHandler.AmbientPath +
+                    DefaultAmbientHandler.ForestMorning.ChangeTrack(AmbientHandler.AmbientPath +
                         $"biome/forest/morning_{m}");
                     if (d > 0)
-                    DefaultAmbientHandler.SetForestDayTrack(AmbientHandler.AmbientPath +
+                    DefaultAmbientHandler.ForestDay.ChangeTrack(AmbientHandler.AmbientPath +
                         $"biome/forest/day_{d}");
                     if (e > 0)
-                    DefaultAmbientHandler.SetForestEveningTrack(AmbientHandler.AmbientPath +
+                    DefaultAmbientHandler.ForestEvening.ChangeTrack(AmbientHandler.AmbientPath +
                         $"biome/forest/evening_{e}");
                     if (n > 0)
-                    DefaultAmbientHandler.SetForestNightTrack(AmbientHandler.AmbientPath +
+                    DefaultAmbientHandler.ForestNight.ChangeTrack(AmbientHandler.AmbientPath +
                         $"biome/forest/night_{n}");
 
                     SyncAmbienceSystem.curMorningAmb = m;
