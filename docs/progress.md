@@ -784,11 +784,19 @@ S1 开工前的唯一前置是上面两条待定项；确认后从 `OggStream` �
 `ModAmbience` 在代码里零引用；关闭流式改为「全部走常驻兜底」而非保留第二套实现。
 独立客户端实测：开启 1,107.5 MB / 关闭 1,778.4 MB（此前基线 2,286.9 MB），零异常。
 
+**16:00 追加修复（主菜单双音乐）**：Alt-Tab 后主题曲与 tModLoader 自带 50 号曲同时响。
+根因是 `MenuMusicGuard` 把失焦时的 `PauseAll`（FNA 暂停会冲刷动态声部队列）判成"坏死"，
+叠了一层兜底曲且从不退场；重建路径还因 `Mod.GetFileNames()` 返回 null 抛 NRE。
+已改为：失焦整段跳过、`IsPaused` 视为存活、兜底曲发现主题恢复即让位并停机、时间常数按秒计。
+隔离环境用探针模组（自带菜单主题曲）模拟失焦/回焦验证：修复前 `fallback=True` 且日志 450 行/秒，
+修复后 `slot50Playing=False`×3、`fallback=True` 0 次、日志 8 行。
+
 **下一步**：真机听感与长稳验证；README 补配置说明。
 
-### 11.11 已知环境问题
+### 11.11 打包（已打通）
 
-`tModLoader.dll -build` 打包在本仓库会失败：报 25 个 FNA 内部成员不可访问（`FNAPlatform`、`MarshalHelper`、`SoundEffectInstance.handle`），
-全部落在本轮未改动的文件里。原因是 `BuildMod=true` 路径下 csproj 的 `Krafs.Publicizer` 未生效，
-而 `dotnet build -p:BuildMod=false` 正常。另有 tML 按文件夹名匹配 csproj 的限制（目录须叫 `TerrariaAmbience`）。
-打包需在 tModLoader 界面进行。
+`dotnet build -p:BuildMod=false` 之后用
+`tModLoader.dll -build <源目录> -eac <源目录>/TerrariaAmbience.dll -unsafe true -savedirectory <隔离目录>`，
+即可复用已编译 DLL 打包，产物 63.9 MB。直接 `-build` 会自己再编译一遍，那条路径上
+`Krafs.Publicizer` 不生效，报 25 个 FNA 内部成员错误。目录名必须是 `TerrariaAmbience`（内部名取文件夹名）；
+另注意 `-eac` 按**文件名在源目录下解析**，源目录里若躺着旧 DLL 会静默打进旧代码。

@@ -350,3 +350,70 @@ ModConfig 文件名是 `<模组名>_<配置类名>.json`，放在 `<savedir>/tMo
 
 1. 把 `AmbientConfig` 里的 `streamAmbientBeds` 说明写进 README（目前只写在代码注释里）。
 2. 若确认稳定，删掉 `InitializeAllAmbienceToAvoidRuntimeOverhead` 与 `using TerrariaAmbienceAPI` 里已无用的部分。
+
+## 12. 主菜单音乐叠两层（2026-11-21 16:00 修复）
+
+### 12.1 现象
+
+主菜单听主题曲时，Alt-Tab 出去再回来，会同时听到**主题曲 + tModLoader 自带菜单曲**（50 号槽）。
+一旦出现就不会自己消失，直到切换菜单主题或离开菜单。
+
+### 12.2 根因（用户本机日志直接给出现场）
+
+`MenuMusicGuard` 把「暂停」当成了「坏死」，然后叠了一层兜底曲，而兜底曲从不退场。
+
+关键日志（`tModLoader-Logs/client.log`，15:44:00–05，`menu=CalamityMainMenu want=119`）：
+
+| 时间 | 内容 |
+|---|---|
+| 15:44:00.115 | `已硬重启 … fade=0.04 pending=0 dead=True`（硬重启后队列为空，正常） |
+| 15:44:00.951 | `正常播放 … fade=0.46 active=False pending=2 dead=False` |
+| 15:44:01.202 | `重建音轨 119 失败: NullReferenceException` |
+| 15:44:01.286 | `want=119 重建后仍无声部数据，回退到默认菜单曲 50` |
+| 15:44:05.972 | `正常播放 … fallback=True` ← 主题曲恢复，兜底曲还在响 |
+
+三处缺陷叠加：
+
+1. **失焦 = 暂停，却被判死。** 失焦时原版每帧 `audioSystem.PauseAll()`；FNA 的 `Pause()` 走
+   `FAudioSourceVoice_Stop`，会冲刷动态声部的队列，`PendingBufferCount` 与 `BuffersQueued`
+   同时归零、`State` 变 `Paused`。旧逻辑只看 `pending == 0 && queued == 0`，在失焦期间必然判死。
+2. **兜底只上不下。** `RunFallback` 每帧把 `musicFade[50]` 顶成 1 并起播 50 号曲，但从不检查
+   主题曲是否已经恢复，也从不停止 50。回焦后 `ResumeAll` 会把两条一起恢复 → 两首同响。
+3. **重建路径本身是坏的。** `FindMusicPath` 直接 `foreach (mod.GetFileNames())`，而
+   `Mod.GetFileNames()` 在 `File == null` 的模组上返回 null → NRE → 重建失败 → 恰好触发了兜底。
+
+另外，守护的时间常数按**帧**计：`CheckInterval=20`、`LogInterval=300`。在 250 fps 的机器上
+"每秒 3 次检查"实际是 12 次/秒，"连续 1 秒无数据"只有 0.24 秒；在无 vsync 的隐藏桌面上
+（实测约 1 万次 Update/秒）日志会刷到 450 行/秒。判死因此比设计意图激进一个数量级。
+
+### 12.3 改动
+
+| 项 | 改动 |
+|---|---|
+| 失焦 | `Main.instance.IsActive == false` 时整段跳过，不推进任何计时、不做任何判定 |
+| 暂停 | `IsPaused` 一律视为存活；`VoiceDiag` 在 `State == Paused` 时直接返回 `Dead=false` |
+| 兜底 | 主题曲一旦"在播 + 未暂停 + 有缓冲"就撤销兜底并 `Stop(Immediate)` 掉 50 号曲 |
+| 兜底 | `want == 50`（主题本身就是默认曲）时禁用兜底，不干预 |
+| 换主题 | 换主题时先 `StopFallback`，避免上一轮兜底曲残留 |
+| 计时 | 改用 `gameTime.ElapsedGameTime`：检查 0.33 s、状态行 5 s，与帧率无关 |
+| 重建 | 先摘槽位、失败时把旧对象放回；`FindMusicPath` 跳过 `File == null` 的模组并逐项 try/catch |
+| 反射 | `_soundEffectInstance` 的 `FieldInfo` 改成静态缓存（兜底期间每帧都会读一次） |
+
+### 12.4 验证（隔离运行时，`MenuProbe` 模组）
+
+探针提供一条模组菜单主题曲（SE 动态音轨，与 Coralite/Calamity 同类，实测槽位 92），
+并在菜单静置 8 s 后把 `Game.IsActive` 置 false 保持 6 s 再置回，随后观察 12 s；
+三个检查点直接读 `audioSystem.IsTrackPlaying(50)`。
+
+| 版本 | `slot50Playing`（失焦前/回焦后/结束） | `fallback=True` | 守护日志行数 |
+|---|---|---|---|
+| 修复前（`e197229` 构建） | 首个对照跑次即出现 `fallback=True` + `正常播放` 并存 | 出现 | **66,390 行 / 135 s**（约 450 行/秒） |
+| 修复后 | `False / False / False` | **0 次** | **8 行 / 整个会话** |
+
+注：修复前的症状是竞态，并非每次都能复现（另一次对照跑次未触发）。这与"用户偶尔遇到"一致；
+修复后该路径被结构性地关掉，不再依赖时序。
+
+### 12.5 未覆盖
+
+- 真实 Alt-Tab（而非模拟 `IsActive=false`）的听感仍需人工确认；
+- Steam 覆盖层、窗口最小化走的是同一条 `IsActive` 通路，按推理应同样修复，但未单独实测。
