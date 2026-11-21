@@ -791,6 +791,12 @@ S1 开工前的唯一前置是上面两条待定项；确认后从 `OggStream` �
 隔离环境用探针模组（自带菜单主题曲）模拟失焦/回焦验证：修复前 `fallback=True` 且日志 450 行/秒，
 修复后 `slot50Playing=False`×3、`fallback=True` 0 次、日志 8 行。
 
+**追加结论（18:45）**：「硫黄海/星辉地/硫火之崖/沉沦之海/霓虹场地无音乐」与本次改造无关。
+探针显示状态为 `playing=True / fade=1.00 / pending=8 / realVol=0.444`，而隔离运行时播放同一首
+`SunkenSea.ogg` 用户可听到；只关闭 `TerrariaOverhaul` 后音乐恢复。根因是 Overhaul 对
+`Main.UpdateAudio` 的 ILHook（`EnableMusicPlaybackPositionPreservation`）会让 tML 动态音轨
+"标志在播、样本流已断"。详见 `docs/streaming-impl-2026-11-21.md` §13。
+
 **下一步**：真机听感与长稳验证；README 补配置说明。
 
 ### 11.11 打包（已打通）

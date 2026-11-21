@@ -417,3 +417,54 @@ ModConfig 文件名是 `<模组名>_<配置类名>.json`，放在 `<savedir>/tMo
 
 - 真实 Alt-Tab（而非模拟 `IsActive=false`）的听感仍需人工确认；
 - Steam 覆盖层、窗口最小化走的是同一条 `IsActive` 通路，按推理应同样修复，但未单独实测。
+
+## 13. "某些群系没有音乐"的定位过程（结论：TerrariaOverhaul 冲突）
+
+### 13.1 现象
+
+用户报告硫黄海、星辉地、硫火之崖、地狱霓虹场地（The Stars Above）、沉沦之海无音乐；
+而在 `debugInterface` 下加探针后，这些位置的状态是**完全正常的播放态**：
+
+```
+cur=109 new=109 fade=1.00 track=OGGAudioTrack playing=True paused=False
+name=CalamityModMusic/Sounds/Music/SunkenSea
+dynVol=0.444 realVol=0.444 pending=8 queued=7~8 rate=48000 ch=Stereo
+```
+
+即：选曲正确、淡入到位、8 个缓冲块已排队、FAudio 在按实时速度消费、声部音量正常。
+**游戏状态与听感完全矛盾。**
+
+### 13.2 排查顺序（每一步都排除了一个可能）
+
+| 步骤 | 方法 | 结果 |
+|---|---|---|
+| 文件是不是静音 | 从 `.tmod` 直接抽出 ogg（自写 tmod 解析：`TMOD` 头 + 文件表 + 原始 deflate） | 48 kHz 立体声，RMS −12.9 dB，前 10 秒 −25 dB，**有声** |
+| 解码器是否兼容 | 用项目自带的 NVorbis 解码同一文件 | `p99.5|d| = 7055`，**有声** |
+| 是否有循环标签 | 读 Vorbis 注释 | 无 `LOOPSTART/LOOPEND`，排除 tML 的循环 seek 分支 |
+| 声部是否真的在跑 | `FAudioSourceVoice_GetState` + `FAudioVoice_GetVolume` | `queued` 在 7↔8 波动、`realVol` 与 `dynVol` 一致 |
+| 引擎侧是否可复现 | 隔离运行时（无其它模组）把同一首 ogg 当菜单曲播放 | **用户确认听到** |
+| 是否模组冲突 | 只关闭 `TerrariaOverhaul` | **音乐恢复** |
+
+### 13.3 根因
+
+`TerrariaOverhaul` 对 `Terraria.Main::UpdateAudio()` 做了 ILHook（日志可见
+`ILHook Terraria.Main::UpdateAudio() added by TerrariaOverhaul`），用于实现
+`[Music] EnableMusicPlaybackPositionPreservation`——"回到旧群系时接着上次进度播放"。
+
+该实现会把音轨暂停在某个位置而不是正常停止。tML 的动态音轨（`ASoundEffectBasedAudioTrack`）
+被这种非标准处置后，对外仍报告 `IsPlaying = true`、队列仍在被消费、音量正常，
+但实际样本流已断，表现为**完全静音**。菜单不走这条 hook，所以主菜单音乐一直正常。
+
+### 13.4 结论与建议
+
+- **与本模组无关**：我们的改动只涉及环境床与主菜单守护，世界内 `curMusic/newMusic` 一行未动。
+- 影响面是**所有模组音乐**（Calamity、The Stars Above 等），不是 TerrariaAmbience 特有。
+- 用户侧解法（已验证可行）：关闭 `TerrariaOverhaul`，或仅关闭其
+  `[Music] EnableMusicPlaybackPositionPreservation`，保留其余功能。
+
+### 13.5 留下的诊断工具
+
+`AudioTrackGuardSystem` 在 `debugInterface` 打开时输出 `[AudioProbe]`：
+`cur/new/fade/track/playing/paused/name/dynVol/realVol/pending/queued/rate/ch`。
+判读：`new=0` → 没判定出曲目；`track=NULL` → 槽位没建起来；`pending=0` → 解码没产出；
+`realVol=0` → 声部被外部静音；全部正常却无声 → 查第三方音频接管（本次即为此类）。
