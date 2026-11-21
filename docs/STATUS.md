@@ -194,6 +194,7 @@ dotnet tModLoader.dll -server -nosteam -savedirectory "<abs>/smoke" -modpath "<a
 | `docs/fix-report-2026-11-19.md` | 第一批修复的逐条说明与验证，§8 记录室内脚步震颤的诊断链 |
 | `docs/streaming-plan-2026-11-19.md` | 流式改造的分阶段方案与 FNA/NVorbis 事实核查 |
 | `docs/streaming-verification-2026-11-21.md` | 流式可行性验证：实机解码、接缝量化、API 修正清单 |
+| `docs/streaming-contingency-plan-2026-11-21.md` | 流式落地风险登记表（14 条）与三层兜底预案 |
 | `docs/STATUS.md` | 本文件 |
 | `dist/*.tmod` | 构建产物（**已在 `.gitignore` 中**，不进库） |
 | `.home/qa/**` | 隔离测试现场（**已忽略**，可整目录删除，不影响仓库与游戏） |
