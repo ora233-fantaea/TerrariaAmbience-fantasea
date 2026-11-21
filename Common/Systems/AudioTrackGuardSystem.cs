@@ -100,7 +100,7 @@ public class AudioTrackGuardSystem : ModSystem {
 
     /// <summary>
     /// 声部内部状态：pending/queued 才是"缓冲区里到底有没有音频数据"的硬指标。
-    /// playing=True 但 pending=0 说明解码侧没产出，听感就是静音。
+    /// realVol 直接从 FAudio 读实际音量，用来识别"FNA 缓存的 Volume 与实际声部不一致"。
     /// </summary>
     static string VoiceExtra(IAudioTrack track) {
         if (track is not ASoundEffectBasedAudioTrack se)
@@ -110,23 +110,27 @@ public class AudioTrackGuardSystem : ModSystem {
             if (DynField?.GetValue(se) is not DynamicSoundEffectInstance dyn)
                 return " | dyn=NULL";
 
+            float realVol = -1f;
             uint queued = 0;
-            string getState = string.Empty;
+            string err = string.Empty;
+
             try {
                 if (dyn.handle != IntPtr.Zero) {
-                    FAudio.FAudioSourceVoice_GetState(dyn.handle, out var state, 256u);
+                    FAudio.FAudioVoice_GetVolume(dyn.handle, out realVol);
+                    FAudio.FAudioSourceVoice_GetState(dyn.handle, out var state, 0u);
                     queued = state.BuffersQueued;
                 }
                 else {
-                    getState = " handle=0";
+                    err = " handle=0";
                 }
             }
             catch {
-                getState = " getState=EX";
+                err = " faudio=EX";
             }
 
-            return $" | dynVol={dyn.Volume:0.000} pending={dyn.PendingBufferCount} queued={queued}" +
-                   $" rate={(int?)RateField?.GetValue(se)} ch={ChannelsField?.GetValue(se)}{getState}";
+            return $" | dynVol={dyn.Volume:0.000} realVol={realVol:0.000} pending={dyn.PendingBufferCount}" +
+                   $" queued={queued}" +
+                   $" rate={(int?)RateField?.GetValue(se)} ch={ChannelsField?.GetValue(se)}{err}";
         }
         catch (Exception e) {
             return $" | voice EX {e.GetType().Name}";
