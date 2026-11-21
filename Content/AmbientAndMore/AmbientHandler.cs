@@ -11,6 +11,7 @@ using TerrariaAmbience.Content.Players;
 using Microsoft.Xna.Framework.Audio;
 using Terraria.ID;
 using TerrariaAmbience.Sounds;
+using TerrariaAmbience.Sounds.Streaming;
 using System.Globalization;
 
 namespace TerrariaAmbience.Content.AmbientAndMore;
@@ -39,6 +40,8 @@ public class AmbientHandler {
     public ModAmbience SnowNight;
     // when it's snowy AND windy!
     public ModAmbience SnowAggro;
+    // 流式版本，与 SnowAggro 二选一：由 AmbientConfig.streamAmbientBeds 在初始化时决定。
+    public StreamedAmbience SnowAggroStream;
 
     public ModAmbience JungleDay;
     public ModAmbience JungleNight;
@@ -64,6 +67,21 @@ public class AmbientHandler {
     public ModAmbience RainHeavy;
 
     public List<ModAmbience> Ambiences { get; private set; }
+
+    // 已迁移到流式的音轨。与 Ambiences 分开维护，是为了在不改变 1.4 行为的前提下逐条替换。
+    public List<StreamedAmbience> StreamedAmbiences { get; private set; } = [];
+
+    /// <summary>是否启用流式环境床。配置尚未注册时按关闭处理。</summary>
+    public static bool StreamingEnabled {
+        get {
+            try {
+                return ModContent.GetInstance<AmbientConfig>().streamAmbientBeds;
+            }
+            catch {
+                return false;
+            }
+        }
+    }
 
     // since ModAmbience can't really do campfire stuff. lul.
     // well it technically could...
@@ -129,9 +147,17 @@ public class AmbientHandler {
         SnowNight = new(mod, AmbientPath + "biome/snow/night", "SnowNight", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
             return InATundra && !Main.dayTime;
         });
-        SnowAggro = new(mod, AmbientPath + "biome/snow/windy", "SnowAggro", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
-            return InATundra && Main.raining;
-        });
+        if (StreamingEnabled) {
+            SnowAggroStream = new(mod, AmbientPath + "biome/snow/windy", "SnowAggro", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
+                return InATundra && Main.raining;
+            });
+            StreamedAmbiences.Add(SnowAggroStream);
+        }
+        else {
+            SnowAggro = new(mod, AmbientPath + "biome/snow/windy", "SnowAggro", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
+                return InATundra && Main.raining;
+            });
+        }
         EvilsCrimson = new(mod, AmbientPath + "biome/crimson/rumbles", "EvilsCrimson", maxVolume: 1f, volumeStep: TransitionHarshness, (a) => {
             return InACrimson;
         });
@@ -187,8 +213,14 @@ public class AmbientHandler {
         // finally, we add all of them via reflection because manual labor is stupid.
         Ambiences = [];
         foreach (var fld in GetType().GetFields().Where(x => x.FieldType.TypeHandle.Equals(typeof(ModAmbience).TypeHandle))) {
-            Ambiences.Add((ModAmbience)fld.GetValue(this));
+            // 开启流式后对应字段保持 null，必须过滤，否则下游每帧解引用会 NRE。
+            if (fld.GetValue(this) is ModAmbience amb)
+                Ambiences.Add(amb);
         }
+
+        mod.Logger.Info($"Ambience streaming: {(StreamedAmbiences.Count > 0
+            ? $"enabled, {StreamedAmbiences.Count} streamed / {Ambiences.Count} resident"
+            : $"disabled, {Ambiences.Count} resident")}");
     }
 
     public static void AddModBiomeTo(Mod mod, List<ModBiome> registry, params string[] biomeInternalNames) {
@@ -295,7 +327,25 @@ public class AmbientHandler {
             amb.VolumeStep = harshness;
         }
 
-        if (Main.gameMenu) return;
+        foreach (var amb in StreamedAmbiences) {
+            if (Main.gameMenu) {
+                amb.PlayInMenu = true;
+                amb.MaxVolume = 0f;
+            }
+
+            amb.Pitch = 0f;
+
+            if (!isHarshOk) continue;
+            amb.VolumeStep = harshness;
+        }
+
+        if (Main.gameMenu) {
+            // 主菜单里 MaxVolume 已被压到 0，这里继续推进包络让它们淡出并停机，
+            // 否则退出世界后流会以最后的音量一直响下去。
+            foreach (var amb in StreamedAmbiences)
+                amb.Update();
+            return;
+        }
 
         InAForest = player.ZonePurity || player.ZoneMeteor || ModdedForests.Any(player.InModBiome) || (player.ZoneHallow && !player.ZoneDesert);
         InADesert = player.ZoneDesert || ModdedDeserts.Any(player.InModBiome);
@@ -326,7 +376,11 @@ public class AmbientHandler {
 
         SnowDay.MaxVolume = GradientGlobals.SkyToUnderground * GradientGlobals.WindSpeedsLow * ModContent.GetInstance<AmbientConfig>().snowVolume;
         SnowNight.MaxVolume = GradientGlobals.SkyToUnderground * GradientGlobals.WindSpeedsLow * ModContent.GetInstance<AmbientConfig>().snowVolume;
-        SnowAggro.MaxVolume = GradientGlobals.SkyToUnderground * GradientGlobals.RainIntensityForSnow * GradientGlobals.WindSpeedsHigh *  ModContent.GetInstance<AmbientConfig>().snowVolume;
+        var snowAggroMax = GradientGlobals.SkyToUnderground * GradientGlobals.RainIntensityForSnow * GradientGlobals.WindSpeedsHigh * ModContent.GetInstance<AmbientConfig>().snowVolume;
+        if (SnowAggro is not null)
+            SnowAggro.MaxVolume = snowAggroMax;
+        if (SnowAggroStream is not null)
+            SnowAggroStream.MaxVolume = snowAggroMax;
         // make quieter / bandpass filter when inside
         Desert.MaxVolume = GradientGlobals.SkyToUnderground * ModContent.GetInstance<AmbientConfig>().desertVolume;
 
@@ -402,6 +456,21 @@ public class AmbientHandler {
 
             amb.MaxVolume *= 0.1f;
         }
+
+        // 与上面的常驻循环等价，只是类型不同。两套都保留，便于逐条迁移与随时回退。
+        for (int i = 0; i < StreamedAmbiences.Count; i++) {
+            var amb = StreamedAmbiences[i];
+            amb.MaxVolume *= pl.InRoomAmbientMultiplier * overallVolume;
+
+            if (!isUnderwater) continue;
+
+            amb.Pitch = -0.05f;
+            amb.MaxVolume *= 0.1f;
+        }
+
+        // 推进流式的状态机：打开 → 预填 → 起播 → 补块 → 停机。
+        for (int i = 0; i < StreamedAmbiences.Count; i++)
+            StreamedAmbiences[i].Update();
     }
 }
 public static class AmbienceID {

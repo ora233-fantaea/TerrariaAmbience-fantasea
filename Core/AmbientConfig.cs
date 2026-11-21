@@ -43,6 +43,14 @@ public class AmbientConfig : ModConfig {
     [DefaultValue(0.2f)]
     public float bossFightMusicMin;
 
+    [Header("Streaming")]
+
+    // 流式环境床（实验）。开启后环境床改为边解码边播放，常驻内存从数百 MB 降到个位数。
+    // 需要在初始化阶段决定字段类型，所以改动后必须重载模组。
+    [ReloadRequired]
+    [DefaultValue(false)]
+    public bool streamAmbientBeds;
+
     [Header("Debugging")]
 
     [DefaultValue(false)]

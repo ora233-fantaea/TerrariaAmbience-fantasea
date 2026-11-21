@@ -155,6 +155,11 @@ RoomSize         = totalSurfaces * gain * 0.5f;
 NVorbis 无「上混」重载（按文件声道数建实例即可，单声道原生支持）；`BufferNeeded` 确实每 tick 泵一次、但泵在 `DoUpdate` 之后且要求 `Play()` 前预填；
 39 条 biome 里 **10 条** 原样回绕会有可闻接缝（最差 `snow/windy` Δ=12254），交叉淡化是必需项而非保险，建议 256 帧。
 
+同日下午完成 **S1–S2 实施**（`docs/streaming-impl-2026-11-21.md`）：`Sounds/Streaming/` 下三个文件（解码内核 / 块队列 / 播放器），
+`SnowAggro` 可由配置开关切到流式（默认关闭）。离线回归 51/51 通过，`snow/windy` 与参考实现逐帧误差为 0，接缝 12254 → 254。
+实施中发现一条推翻原方案的 API 事实：**NVorbis 在距文件末尾 4096 帧以内 seek 会错位**（最大偏差 12,512），
+因此接缝取材必须顺序解码，不能 seek；`docs/streaming-plan-2026-11-19.md` 里「打开时 seek 取尾部」的写法已作废。
+
 ---
 
 ## 7. 构建与验证方法（可复现）
@@ -195,6 +200,7 @@ dotnet tModLoader.dll -server -nosteam -savedirectory "<abs>/smoke" -modpath "<a
 | `docs/streaming-plan-2026-11-19.md` | 流式改造的分阶段方案与 FNA/NVorbis 事实核查 |
 | `docs/streaming-verification-2026-11-21.md` | 流式可行性验证：实机解码、接缝量化、API 修正清单 |
 | `docs/streaming-contingency-plan-2026-11-21.md` | 流式落地风险登记表（14 条）与三层兜底预案 |
+| `docs/streaming-impl-2026-11-21.md` | S1–S2 实施记录：三个新文件、NVorbis seek 缺陷、51 条离线验收 |
 | `docs/STATUS.md` | 本文件 |
 | `dist/*.tmod` | 构建产物（**已在 `.gitignore` 中**，不进库） |
 | `.home/qa/**` | 隔离测试现场（**已忽略**，可整目录删除，不影响仓库与游戏） |

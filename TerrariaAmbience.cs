@@ -16,6 +16,7 @@ using System.Collections.Generic;
 using Terraria.ModLoader.Core;
 using System.Reflection;
 using TerrariaAmbience.Sounds;
+using TerrariaAmbience.Sounds.Streaming;
 using TerrariaAmbience.Sounds.SoundFilters;
 using TerrariaAmbience.Sounds.SoundFilters.FAudioHacks;
 using TerrariaAmbience.Common.Systems;
@@ -254,6 +255,15 @@ public partial class TerrariaAmbience : Mod {
     }
 
     static void UnloadAllSFXSoWeCanAvoidStupidCrashesThatHappenOnUnload() {
+        // 流式音轨持有后台线程与独立文件句柄，必须在卸载时先收掉，
+        // 否则重载模组会留下僵尸线程继续读旧 .tmod。
+        try {
+            StreamedAmbience.DisposeAll();
+        }
+        catch (Exception e) {
+            ModContent.GetInstance<TerrariaAmbience>().Logger.Warn("Streamed ambience cleanup failed: " + e.Message);
+        }
+
         // 注意：这里不能因为 DefaultAmbientHandler 为 null 就整体返回，
         // 否则服务端（Handler 从未构造）会跳过下面所有音源的释放。
         var handler = DefaultAmbientHandler;

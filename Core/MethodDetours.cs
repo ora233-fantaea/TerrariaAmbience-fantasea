@@ -81,6 +81,9 @@ internal class MethodDetours {
             foreach (var amb in TerrariaAmbience.DefaultAmbientHandler.Ambiences) {
                 column1 += $"\n{amb.Name}: {amb.Volume:0.###}";
             }
+            foreach (var amb in TerrariaAmbience.DefaultAmbientHandler.StreamedAmbiences) {
+                column1 += $"\n{amb.Name}: {amb.Volume:0.###} (u{amb.Underruns})";
+            }
 
             if (Main.playerInventory && (Main.mapStyle == 0 || Main.mapStyle == 2))
                 drawPos = new Vector2(Main.screenWidth - Main.screenWidth / 7, 80);

@@ -741,3 +741,42 @@ bool thunder = Main.cloudAlpha > 0.02f
 ### 11.9 下一动作
 
 S1 开工前的唯一前置是上面两条待定项；确认后从 `OggStream` 内核与离线回归开始。
+
+### 11.10 S1–S2 实施记录（2026-11-21 下午）
+
+**已落地**：`Sounds/Streaming/` 下三个文件（`OggStream` / `BlockQueue` / `StreamedAmbience`，约 845 行），
+外加四处接线（配置开关、`AmbientHandler` 双集合、卸载清理、调试面板）。详见 `docs/streaming-impl-2026-11-21.md`。
+
+**三条修正了原方案的事实**：
+
+1. **NVorbis 的 seek 只有位置 0 可靠。** `snow/windy` 上距末尾 4,096 帧以内必然错位（最大偏差 12,512）；
+   `rain/light` 上连中点都错，因为该文件的 granule 元数据本身是坏的（`TotalSamples` 少报 448 帧）。
+   原方案「打开时 seek 到 `total-W` 取尾部做交叉淡化」不可行；最终改为「只 seek 到 0，再顺序解码丢弃 W 帧」。
+   尾部附近反复 seek 还会长时间卡死（`total-260` 超过 100 秒无返回）。
+2. **API 内置的 `ModStreamedAmbience` 不能直接用。** 三个硬伤：`UpdateAll` 每帧 `Main.NewText` 刷屏；
+   `Path.Combine(Mod.SourceFolder, …)` 在发布版为 null 会抛异常；`Volume` setter 内 `TryStartStreaming` 异常外抛。
+   但它的块大小（1024 样本）、预填 4 块、`DynamicSoundEffectInstance` 用法被证实是对的，自研版沿用。
+3. **`DynamicSoundEffectInstance.IsLooped` 是空实现**（getter 恒 false、setter 空），循环只能手动回绕；
+   且 `Play()` 在 `State == Stopped` 时不会触发 `BufferNeeded`，预填必须早于 `Play()`。
+
+**验收结果**：
+
+| 项 | 结果 |
+|---|---|
+| 离线回归 | 51 / 51 通过（biome 43 + environment 5 + rain 3） |
+| 逐帧一致性 | 渲染 3 个周期，与全量顺序解码的参考实现比对，**最大误差 0**（普通流与 tML 条目流语义下都是 0） |
+| 原生会响的 9 条 | 全部修复，3.2×–48×；`snow/windy` 12,254 → 254，`hell` 1,713 → 65，`crimson` 2,201 → 94 |
+| 解码吞吐 | 约 8,000 kframes/s；100 ms 块最大 3.6 ms |
+| `BlockQueue` 并发 | 4 槽、20 万块，零丢失 / 零错序 / 零串块 |
+
+**状态**：`SnowAggro` 已可由 `AmbientConfig.streamAmbientBeds` 切换到流式（默认关闭，改动需重载）。
+开关关闭时 `1.4` 行为逐行不变。真机听感、设备热切换、长稳未验证，需人工。
+
+**下一步**：S3（流池上限 4 + 迁森林 4 条）。
+
+### 11.11 已知环境问题
+
+`tModLoader.dll -build` 打包在本仓库会失败：报 25 个 FNA 内部成员不可访问（`FNAPlatform`、`MarshalHelper`、`SoundEffectInstance.handle`），
+全部落在本轮未改动的文件里。原因是 `BuildMod=true` 路径下 csproj 的 `Krafs.Publicizer` 未生效，
+而 `dotnet build -p:BuildMod=false` 正常。另有 tML 按文件夹名匹配 csproj 的限制（目录须叫 `TerrariaAmbience`）。
+打包需在 tModLoader 界面进行。
