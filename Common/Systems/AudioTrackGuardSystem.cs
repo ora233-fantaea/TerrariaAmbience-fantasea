@@ -61,8 +61,85 @@ public class AudioTrackGuardSystem : ModSystem {
             Mod.Logger.Info($"[AudioProbe] alive debug={debug} menu={Main.gameMenu} sys={Main.audioSystem?.GetType().Name}");
         }
 
-        if (debug)
+        if (debug) {
             ProbeMusic();
+            ForceMusicAudible();
+        }
+    }
+
+    // ---- 实验：把 Overhaul 之外的干扰清掉，看声音是否回来 ----
+    // Overhaul 每帧对每个动态音轨做两件事：给声部挂低通（cutoff 被当成 0.1~1 Hz），
+    // 以及往混响子混音写发送矩阵。两者都不改音量/状态，正好符合“状态健康但听不见”。
+    // 这里在帧末把它们改成通带 + 单位阵；如果声音回来，就说明是这两者之一。
+    static long _forceLastLog = -1000;
+    static readonly Stopwatch ForceWatch = Stopwatch.StartNew();
+
+    static unsafe void ForceMusicAudible() {
+        try {
+            if (Main.audioSystem is not LegacyAudioSystem sys || sys.AudioTracks is null)
+                return;
+
+            int i = Main.curMusic;
+            if (i <= 0 || i >= sys.AudioTracks.Length)
+                return;
+            if (sys.AudioTracks[i] is not ASoundEffectBasedAudioTrack se)
+                return;
+            if (DynField?.GetValue(se) is not DynamicSoundEffectInstance dyn || dyn.handle == IntPtr.Zero)
+                return;
+
+            int rate = (int?)RateField?.GetValue(se) ?? 44100;
+            int ch = Convert.ToInt32(ChannelsField?.GetValue(se)) == 2 ? 2 : 1;
+
+            var dev = SoundEffect.Device();
+
+            // 先记录干预前的真实状态，再动手改。
+            string before = "?";
+            try {
+                var got = new float[ch * 2];
+                FAudio.FAudioVoice_GetOutputMatrix(dyn.handle, dev.MasterVoice, (uint)ch, 2u, got);
+                before = "[" + string.Join(",", Array.ConvertAll(got, v => v.ToString("0.###"))) + "]";
+            }
+            catch (Exception e) {
+                before = "EX:" + e.GetType().Name;
+            }
+
+            var fp = new FAudio.FAudioFilterParameters {
+                Type = FAudio.FAudioFilterType.FAudioLowPassFilter,
+                Frequency = rate * 0.45f,   // 接近 Nyquist，等价于不滤
+                OneOverQ = 1f,
+            };
+            uint hrFilter = FAudio.FAudioVoice_SetFilterParameters(dyn.handle, ref fp, 0);
+
+            var m = ch == 2 ? new float[] { 1f, 0f, 0f, 1f } : new float[] { 1f, 1f };
+            uint hrMatrix;
+            fixed (float* pm = m) {
+                hrMatrix = FAudio.FAudioVoice_SetOutputMatrix(dyn.handle, dev.MasterVoice, (uint)ch, 2u, (nint)pm, 0);
+            }
+
+            long now = ForceWatch.ElapsedMilliseconds;
+            if (now - _forceLastLog >= 5000) {
+                _forceLastLog = now;
+
+                string readback = "?";
+                try {
+                    var got = new float[ch * 2];
+                    FAudio.FAudioVoice_GetOutputMatrix(dyn.handle, dev.MasterVoice, (uint)ch, 2u, got);
+                    readback = "[" + string.Join(",", Array.ConvertAll(got, v => v.ToString("0.###"))) + "]";
+                }
+                catch (Exception e) {
+                    readback = "EX:" + e.GetType().Name;
+                }
+
+                _mod.Logger.Info($"[AudioFix] slot={i} rate={rate} ch={ch} matrixBefore={before} " +
+                    $"setFilter=0x{hrFilter:X} setMatrix=0x{hrMatrix:X} matrixAfter={readback}");
+            }
+        }
+        catch (Exception e) {
+            if (ForceWatch.ElapsedMilliseconds - _forceLastLog >= 5000) {
+                _forceLastLog = ForceWatch.ElapsedMilliseconds;
+                _mod?.Logger.Info($"[AudioFix] EX {e.GetType().Name}: {e.Message}");
+            }
+        }
     }
 
     float _lastMusicVolume = -1f;
@@ -203,7 +280,7 @@ public class AudioTrackGuardSystem : ModSystem {
                     filter = $"filt={fp.Type}@{fp.Frequency:0.###}Hz/q={fp.OneOverQ:0.##}";
 
                     var dev = SoundEffect.Device();
-                    int ch = (int?)ChannelsField?.GetValue(se) == 2 ? 2 : 1;
+                    int ch = Convert.ToInt32(ChannelsField?.GetValue(se)) == 2 ? 2 : 1;
                     var m = new float[ch * 2];
                     FAudio.FAudioVoice_GetOutputMatrix(dyn.handle, dev.MasterVoice, (uint)ch, 2u, m);
                     matrix = "dry=[" + string.Join(",", Array.ConvertAll(m, v => v.ToString("0.###"))) + "]";
