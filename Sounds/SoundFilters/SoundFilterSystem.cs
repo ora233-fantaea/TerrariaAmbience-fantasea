@@ -124,6 +124,16 @@ public class SoundFilterSystem : ModSystem {
 
         UpdateReverbParams();
     }
+    /// <summary>
+    /// 离开世界时把缓存清掉。判重键是静态的，不清的话回到新世界时
+    /// 只要听者恰好落在同一格、房间格数又相同，就会一直沿用上一个世界的混响参数。
+    /// </summary>
+    public override void OnWorldUnload() {
+        LatestParams = default;
+        _lastReverbTile = default;
+        _lastReverbTileCount = -1;
+    }
+
     public static void UpdateReverbParams() {
         var time = (uint)ModContent.GetInstance<AudioConfig>().audioFiltersRefreshTime;
         if (time == 0)

@@ -904,3 +904,13 @@ S1 开工前的唯一前置是上面两条待定项；确认后从 `OggStream` �
 
 排除法：把 Overhaul 的 `EnablePlayerFootsteps` 关掉再走同一段黑曜石，若「叠加」消失即为第 1 条；
 若只剩更薄的「双撞」，则是第 2 条的素材特性，与混响无关。
+
+#### 补充（22:51）：离开世界清判重缓存
+
+`UpdateReverbParams` 的判重键（`_lastReverbTile` / `_lastReverbTileCount`）是静态的，跨世界不清。
+只要回新世界时听者落在同一格、房间格数又相同，就会一直沿用上一轮（甚至上一个世界）的混响参数。
+补 `OnWorldUnload`：`LatestParams = default`、键复位为 `-1`。
+
+重新出包：`63,952,827 B` / `dcbc364c…`，临时目录服务器加载到 `Adding Recipes`，零异常。
+已部署到用户 `Mods` 根目录；上一版（22:40 / `6e678e80…`）存 `_versions\...-2240.tmod`。
+同时把用户的 `TerrariaAmbience_AudioConfig.json` 从 `isReverbEnabled: false` 改回 `true`（经用户确认）。
