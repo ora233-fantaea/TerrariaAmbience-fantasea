@@ -144,6 +144,11 @@ public class SoundFilterSystem : ModSystem {
         _lastReverbTileCount = tileCount;
 
         LatestParams = GenerateAudioFilters(room);
+
+        // 共享混响子混音的参数必须跟着「当前房间」走。
+        // 原来只在某个音源首次挂混响时写一次，尾音长度实际取的是最后一个新开音效的房间。
+        if (LatestParams.ReverbEnabled && FAudioReverbController.IsInitialized)
+            FAudioReverbController.UpdateRoomParams(LatestParams.Reverb);
     }
 
     static Point _lastReverbTile;
@@ -224,6 +229,7 @@ public class SoundFilterSystem : ModSystem {
 
         // base values for reverb :)
         fParam.Reverb = FAudioReverbController.DefaultFAudioReverb;
+        fParam.ReverbEnabled = true;
 
         if (!aaCfg.advancedReverbCalculation) {
             // 简化的按深度插值路径同样要受湿度控制，否则关掉高级混响后这个开关会失效。

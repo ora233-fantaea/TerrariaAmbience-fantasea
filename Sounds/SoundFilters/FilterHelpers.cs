@@ -31,6 +31,10 @@ public static class FilterHelpers {
         }
 
         try {
+            // 混响关闭时不必把子混音建起来：连 voice 都不创建，这条路径就完全不存在。
+            if (!param.ReverbEnabled && !FAudioReverbController.IsInitialized)
+                return instance;
+
             FAudioReverbController.RvInit();
 
             FAudioReverbController.ApplyCustomReverb(instance, param.ReverbGain, param);

@@ -209,6 +209,12 @@ public struct FilterParams {
     public float ReverbGain;
     public FAudio.FAudioFXReverbParameters Reverb;
 
+    /// <summary>
+    /// 混响总开关。为 false 时连发送都不挂（不改音源路由、不写共享混响参数），
+    /// 只把已经挂过的音源的发送量压到 0，保证「关了就是关了」。
+    /// </summary>
+    public bool ReverbEnabled;
+
     public float LowPassIntensity;
 	public bool LowPassEnabled;
     public float BandPassIntensity;

@@ -862,3 +862,45 @@ S1 开工前的唯一前置是上面两条待定项；确认后从 `OggStream` �
 
 诊断手段保留在 `AudioTrackGuardSystem`（`debugInterface` 打开时）：`[AudioProbe]`（含 `dry`/`rv`/`filt`）
 与 `[AudioBuf]`（交给声部的 PCM RMS）。
+
+### 11.14 混响路径收口：共享矩阵、voice 重建、房间参数、真关断（2026-11-21 22:40）
+
+用户侧现状：`TerrariaAmbience_AudioConfig.json` 里 `isReverbEnabled = false`；
+反馈是「硬地面（黑曜石）上仍有电流音 + 叠加」，并要求确认本模组还会不会出这种声音。
+
+#### 代码审查发现的四条，全部与本模组有关
+
+| # | 位置 | 问题 | 后果 |
+|---|---|---|---|
+| R1 | `FAudioReverbController.ApplyCustomReverb` | 发送矩阵写进 `inst.dspSettings.pMatrixCoefficients` | 这块缓冲同时是 FNA 推给主输出的**干路**矩阵。`Play()`（`Pan != 0` 或 3D）会把这块缓冲原样推给 master，干路增益被改成 `rvGain` —— 与 Overhaul `ReverbSystem` 是同一个错误 |
+| R2 | 同上 | `inst.usingReverb` 一旦为真就不再检查 `handle` | FNA 的 `Stop()`（非 immediate）之后再 `Play()` 会重建 source voice；新 voice 没有任何发送，混响静默失效，而 `SetOutputMatrix` 还会打到一个不是发送目标的子混音上 |
+| R3 | `ReverbAttach` | 共享 `device.ReverbVoice` 的 `SetEffectParameters` 只在音源**首次挂载**时写 | 尾音长度取决于「最后一个新开的音效」所在房间，玩家换房间后不跟着变 |
+| R4 | `FilterHelpers.ApplyReverb` | `isReverbEnabled = false` 时 `ReverbGain = 0`，但代码仍会 `RvInit` + 挂发送 + 用**全零**参数覆盖共享混响 | 开关看似关了，实际上每个音效都改了路由、还把共享混响参数写成全零（会顺带破坏别的模组的混响） |
+
+#### 改动
+
+- `FilterParams` 新增 `ReverbEnabled`；关闭时**不挂发送、不建子混音、不碰共享参数**，只把已经挂过的音源发送量压到 0（覆盖中途开关的情况）。
+- `SetSendGain` 改用 `stackalloc` 局部数组，干路矩阵彻底不再被写。
+- 用 `ConditionalWeakTable<SoundEffectInstance, StrongBox<nint>>` 记录「挂载时的 handle」，handle 变了就重挂。
+- 新增 `UpdateRoomParams`，由 `SoundFilterSystem.UpdateReverbParams` 在每次刷新（默认 10 tick）推送当前房间参数。
+
+#### 验证
+
+| 项 | 结果 |
+|---|---|
+| 编译 | 0 错误（7 条既有警告） |
+| 打包 | `63,952,756 B`，包内 `TerrariaAmbience.dll` = 179,712 B（与构建输出一致） |
+| 服务器加载 | `Adding Content → Finalizing → Adding Recipes`，零 Error/Exception |
+
+#### 关于「电流音 + 叠加」还剩下的来源（不是混响）
+
+1. **两套脚步同时在跑**：`TerrariaOverhaul\Config.toml` 里 `[Ambience] EnablePlayerFootsteps = true`，
+   Overhaul 自己在 `StoneMaterial` 上播一套脚步；本模组同时播 `Sounds/Custom/steps/stone/step1-8`，
+   外加 `armor/heavy`（最多 0.36）与 `armor/light` 两层的 `UseAnyTile` 叠层。同一步会有 2–4 个音源。
+2. **素材本身自带二次瞬态**：对 `stone/step1-8` 做 1 ms RMS 包络分析，主峰之后 13–65 ms 处还有
+   一个 −6.4 ~ −9.8 dB 的次峰（8 条里 6 条有；`step4` 在 15.9 ms、−9.3 dB）。
+   落进 flam 区间，听感就是「一下变两下」。
+3. 黑曜石同时属于 `StoneBlocks`，且反射率是 High —— 开混响时它是全场最湿的地面，这也是「硬地面最明显」的原因。
+
+排除法：把 Overhaul 的 `EnablePlayerFootsteps` 关掉再走同一段黑曜石，若「叠加」消失即为第 1 条；
+若只剩更薄的「双撞」，则是第 2 条的素材特性，与混响无关。
