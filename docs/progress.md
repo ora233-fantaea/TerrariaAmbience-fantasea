@@ -654,5 +654,90 @@ bool thunder = Main.cloudAlpha > 0.02f
 | 日期 | 变更 |
 |---|---|
 | 2026-11-18 | 首版：clone fork（`77291bd`）→ 反编译发布包对照 → 通读 HEAD → 复核上一轮 7 条（更正 2 条）→ 建立 B1–B31 台账 |
+| 2026-11-21 | 新增 §11：`stream-1.4` 分支的流式改造进度（准备阶段，零代码改动） |
 
 > 本次只新增了本文件，未提交、未推送；仓库其余文件保持 clone 时的状态。
+
+---
+
+## 11. 流式改造进度（`stream-1.4`，2026-11-21）
+
+> **本节与上面 §1–§9 的关系**：§1–§9 是 `1.4` 基线（`77291bd`）的缺陷台账，保持原样不改。
+> 从本节起，本文件同时记录 `stream-1.4` 分支的流式改造进展。两条线**不回灌、不合并**。
+
+### 11.1 分支与工作副本
+
+| 项 | 值 |
+|---|---|
+| 分支 | `stream-1.4`，从 `1.4` 的 `66d0e73` 切出（2026-11-21） |
+| 工作副本 | `D:\Terraria-Ambience-Stream-branch`（专绑 `stream-1.4`）；`E:\terraria-ambience-fork` 留给 `1.4` |
+| 远端 | `origin` = `github.com/ora233-fantaea/TerrariaAmbience-fantasea` |
+| 本分支提交 | `9e3f8ba` 可行性验证 → `b30d7bf` 风险预案 |
+| 与 `1.4` 的关系 | 独立演进；`1.4` 上的 `9a335de`、`27bd268`（采样率警告、README）**不在**本分支 |
+
+### 11.2 当前状态
+
+- 阶段：**准备完成，未写任何实现代码**。
+- 代码改动：0 行（仅 `docs/`）。
+- 已产出：`docs/streaming-verification-2026-11-21.md`（可行性验证）、`docs/streaming-contingency-plan-2026-11-21.md`（风险预案）。
+
+### 11.3 实测基线（本机，非估算）
+
+| 项 | 结果 |
+|---|---|
+| biome 环境床 | 43 个文件 / 解码 **369.2 MB**（与旧方案 369 MB 吻合） |
+| environment + rain | 5 + 3 = 8 个 / **23.6 MB**（旧方案写 12 个，有误） |
+| 合计 | 51 个 / **392.8 MB** |
+| 声道 | 单声道仅 1 条：`forest/day_3.ogg`（即 API 版 A1 会崩的那类） |
+| 采样率 | 44.1 kHz 35 条、48 kHz 8 条 → 实例采样率必须取文件值 |
+| 解码成本（100 ms 块） | P50 0.2–0.9 ms、P95 0.65–1.17 ms、max 6–9 ms |
+| 预填 3 块 | 0.45–1.9 ms |
+| 循环接缝 | 39 条 biome 中 **10 条** Δ > P99.5；最差 `snow/windy` **12254**（满量程 37%） |
+| 交叉淡化效果 | 64 帧 → 321、256 帧 → 114（均 < P99.5） |
+| 历史残留 | `biome/{forest,jungle}_{day,night}.ogg` 4 个文件代码零引用（21.4 MB 解码 / 2.3 MB 磁盘） |
+
+### 11.4 已核实的 API 事实
+
+| # | 事实 | 出处 |
+|---|---|---|
+| 1 | `BufferNeeded` 每 tick 泵一次、最多补 3 块；泵在 `DoUpdate` 之后；`Play()` 前必须预填 | FNA `FrameworkDispatcher.Update`；`Main.Update` 末尾 `((Game)this).Update(gameTime)` |
+| 2 | `IsLooped` setter 是空实现，循环只能自己做 | FNA `DynamicSoundEffectInstance` |
+| 3 | NVorbis 0.10.0.3 **没有** 4 参 `ReadSamples`（无上混）；`DecodedPosition` 已过时 | 反编译 `VorbisReader` |
+| 4 | `.tmod` 内 `.ogg` 不参与 deflate，字节数 == 磁盘大小 | `TmodFile.ShouldCompress` |
+| 5 | 读 `.tmod` 必须用独立句柄（`GetFileStream(..., true)`），共享流并发会抛异常 | `TModContentSource.OpenStream` |
+| 6 | `Main.Update` 的 `try` 只包 `DoUpdate`；回调异常直穿 `Game.Tick` | `main-decomp.cs:16754–16791` |
+| 7 | `ThreadCheck.CheckThread()` 非主线程抛 `ThreadStateException`；`Stop(immediate)` 在动态分支调用 | FNA `SoundEffectInstance.Stop` |
+| 8 | `SoundEffect.Device()` 失败时抛 `NoAudioHardwareException`，不返回 null | FNA `SoundEffect.Device` |
+| 9 | `Stop()` 在 `handle == IntPtr.Zero` 时提前返回，`ClearBuffers()` 不执行 → 预填未 Play 会漏原生内存 | FNA `SoundEffectInstance.Stop` |
+
+### 11.5 定型的实现方向
+
+1. **范围**：只流式化 43 条 biome 环境床；脚步 199、开箱/合成/NPC、97 个 wav 一次性音效保持常驻。
+2. **不改 API 二进制**：平行类 `StreamedAmbience` 与 `ModAmbience` 同形，`AmbientHandler` 25 个字段换型，`Ambiences` 改 `List<IAmbience>`；自研流不注册进 `AllModAmbiences`。
+3. **线程**：解码在工作线程，`SubmitBuffer` 只在主线程；3 × 100 ms 在飞；`BufferNeeded` 主路径 + 每 tick 兜底。
+4. **循环**：回绕填充 + 256 帧等功率交叉淡化，统一开启。
+5. **流池**：上限 4（含 1 条过渡位），按「静音最久」回收；`ChangeTrack` 命中 `byte[]` 缓存。
+6. **三层兜底**：流内自愈 → 单条降级为常驻 `SoundEffect` → 配置开关全局关闭。
+
+### 11.6 交付顺序
+
+| 步 | 内容 | 验收 |
+|---|---|---|
+| S1 | `OggStream` 内核 + 离线回归（不接游戏） | 2.2 圈无丢帧、接缝 ≤ P99.5 |
+| S2 | 单条打通：`SnowAggro` | 10 分钟 `Underruns == 0` |
+| S3 | 流池 + 森林 4 条 | 常驻 ≤ 4 条、切群系无静音 |
+| S4 | 其余 39 条 + 删预载 | 内存 369 MB → 约 10 MB |
+
+### 11.7 排期
+
+- 原估 15 人日 → 加兜底与观测后 **18.5 人日**；含风险缓冲约 **20–22 人日**。
+- 可延后项：设备热切换（R7）、池容量调优（R13）。
+
+### 11.8 待定事项
+
+1. 流池上限取 4 还是 5（雨雪叠加场景）。
+2. environment / rain 那 8 条是否纳入（只多省 23.6 MB，约 6%）。
+
+### 11.9 下一动作
+
+S1 开工前的唯一前置是上面两条待定项；确认后从 `OggStream` 内核与离线回归开始。
