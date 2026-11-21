@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using Terraria;
 using Terraria.Audio;
 using Terraria.ModLoader;
@@ -30,9 +33,11 @@ public class AudioTrackGuardSystem : ModSystem {
     }
 
     float _lastMusicVolume = -1f;
-    double _probeClock;
+    readonly Stopwatch _probeWatch = Stopwatch.StartNew();
+    double _lastProbeAt = -10;
     int _lastProbeMusic = int.MinValue;
     bool _probeResolved;
+    static Dictionary<int, string> _slotNames;
 
     public override void PostUpdateEverything() {
         if (Main.dedServ)
@@ -53,6 +58,7 @@ public class AudioTrackGuardSystem : ModSystem {
     /// 排查"某个群系没有音乐"。三种可能分得很开：
     /// new=0 → 压根没判定出曲目（群系/SceneEffect 侧）；track=NULL → 槽位注册了但音轨没建起来（音乐包侧）；
     /// fade 长期 0 且 playing=False → 音轨在、但没被拉起。
+    /// 同时打印槽位对应的资源名，便于直接判断是哪首曲子。
     /// </summary>
     void ProbeMusic() {
         if (Main.gameMenu)
@@ -60,15 +66,13 @@ public class AudioTrackGuardSystem : ModSystem {
         if (Main.audioSystem is not LegacyAudioSystem sys || sys.AudioTracks is null || Main.musicFade is null)
             return;
 
-        double dt = Math.Clamp(Main.gameTimeCache.ElapsedGameTime.TotalSeconds, 0, 0.2);
-        _probeClock += dt;
-
         int next = Main.newMusic;
+        double now = _probeWatch.Elapsed.TotalSeconds;
         bool changed = next != _lastProbeMusic;
-        if (!changed && _probeClock < 5.0)
+        if (!changed && now - _lastProbeAt < 3.0)
             return;
 
-        _probeClock = 0;
+        _lastProbeAt = now;
         _lastProbeMusic = next;
 
         if (!_probeResolved) {
@@ -83,7 +87,56 @@ public class AudioTrackGuardSystem : ModSystem {
         Mod.Logger.Info($"[AudioProbe] cur={Main.curMusic} new={next} fade={fade:0.00} " +
             $"track={(track is null ? "NULL" : track.GetType().Name)} " +
             $"playing={track?.IsPlaying} paused={track?.IsPaused} " +
-            $"slotRange={(next > 0 && next < sys.AudioTracks.Length ? "ok" : "OUT-OF-RANGE")}");
+            $"name={SlotName(next)}");
+    }
+
+    /// <summary>槽位 → "模组/资源路径"，只建一次。把 new=145 翻译成"这是哪首曲子"。</summary>
+    static string SlotName(int slot) {
+        if (slot <= 0)
+            return "-";
+
+        if (_slotNames is null) {
+            var map = new Dictionary<int, string>();
+            foreach (var mod in ModLoader.Mods) {
+                if (mod is null)
+                    continue;
+
+                List<string> names;
+                try {
+                    names = mod.GetFileNames();
+                }
+                catch {
+                    continue;
+                }
+
+                if (names is null)
+                    continue;
+
+                foreach (string raw in names) {
+                    string file = raw.Replace('\\', '/');
+                    string ext = Path.GetExtension(file).ToLowerInvariant();
+                    if (ext is not (".ogg" or ".mp3" or ".wav"))
+                        continue;
+                    if (!file.StartsWith("Music/", StringComparison.OrdinalIgnoreCase)
+                        && !file.Contains("/Music/", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    string full = mod.Name + "/" + file.Substring(0, file.Length - ext.Length);
+                    try {
+                        int s = MusicLoader.GetMusicSlot(full);
+                        if (s > 0)
+                            map[s] = full;
+                    }
+                    catch {
+                        // 单个模组的资源名解析失败不影响整体映射。
+                    }
+                }
+            }
+
+            _slotNames = map;
+        }
+
+        return _slotNames.TryGetValue(slot, out var name) ? name : $"<vanilla {slot}>";
     }
 
     static string SafeMaster() {
