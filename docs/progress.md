@@ -791,7 +791,7 @@ S1 开工前的唯一前置是上面两条待定项；确认后从 `OggStream` �
 隔离环境用探针模组（自带菜单主题曲）模拟失焦/回焦验证：修复前 `fallback=True` 且日志 450 行/秒，
 修复后 `slot50Playing=False`×3、`fallback=True` 0 次、日志 8 行。
 
-**追加结论（18:45）**：「硫黄海/星辉地/硫火之崖/沉沦之海/霓虹场地无音乐」与本次改造无关。
+**更正结论（21:20）**：真正的根因是 Overhaul 的 **`ReverbSystem`**，不是「位置记忆」。
 探针显示状态为 `playing=True / fade=1.00 / pending=8 / realVol=0.444`，而隔离运行时播放同一首
 `SunkenSea.ogg` 用户可听到；只关闭 `TerrariaOverhaul` 后音乐恢复。根因是 Overhaul 对
 `Main.UpdateAudio` 的 ILHook（`EnableMusicPlaybackPositionPreservation`）会让 tML 动态音轨
@@ -848,3 +848,17 @@ S1 开工前的唯一前置是上面两条待定项；确认后从 `OggStream` �
 2. **设备热切换 / 最小化恢复 / 30 分钟长稳**未测。
 3. `_versions` 里的 resident 包由 `1.4` 构建，**不含** `7986d2f` 的菜单音乐修复；需要时另行出包。
 4. 关掉 `streamAmbientBeds` 时森林 24 首仍会预载（这是兜底路径的前提），属预期。
+
+### 11.13 "世界内模组音乐静音"最终定位（2026-11-21 21:20）
+
+| 项 | 结论 |
+|---|---|
+| 症状 | 世界内模组音乐全静音；`playing=True / pending=8 / realVol=0.444` 全部正常 |
+| 根因 | `TerrariaOverhaul` 的 `ReverbSystem` 每帧调用 FNA 的 `INTERNAL_applyReverb`，把声部到 master 的输出矩阵写成 `[0,0,0,0]` |
+| 为何菜单正常 | `PostUpdateEverything` 在主菜单不执行，`UpdateMusic` 从不运行 |
+| 证据 | 同会话 21:15:12 世界内 `dry=[0,0,0,0]`；21:15:20 菜单 `dry=[1,0,0,1]`；21:23 关混响后世界内恢复 `[1,0,0,1]` |
+| 解法 | `TerrariaOverhaul\Config.toml` → `[Ambience] EnableReverb = false`（已验证） |
+| 无关项 | `EnableMusicPlaybackPositionPreservation`、`EnableLowPassFiltering`（`@1Hz` 是 FAudio 默认值，表示关闭） |
+
+诊断手段保留在 `AudioTrackGuardSystem`（`debugInterface` 打开时）：`[AudioProbe]`（含 `dry`/`rv`/`filt`）
+与 `[AudioBuf]`（交给声部的 PCM RMS）。

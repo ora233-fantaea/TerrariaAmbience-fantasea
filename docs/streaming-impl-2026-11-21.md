@@ -445,26 +445,62 @@ dynVol=0.444 realVol=0.444 pending=8 queued=7~8 rate=48000 ch=Stereo
 | 引擎侧是否可复现 | 隔离运行时（无其它模组）把同一首 ogg 当菜单曲播放 | **用户确认听到** |
 | 是否模组冲突 | 只关闭 `TerrariaOverhaul` | **音乐恢复** |
 
-### 13.3 根因
+### 13.3 根因（2026-11-21 21:20 最终确认）
 
-`TerrariaOverhaul` 对 `Terraria.Main::UpdateAudio()` 做了 ILHook（日志可见
-`ILHook Terraria.Main::UpdateAudio() added by TerrariaOverhaul`），用于实现
-`[Music] EnableMusicPlaybackPositionPreservation`——"回到旧群系时接着上次进度播放"。
+**`TerrariaOverhaul` 的 `ReverbSystem` 会把世界内音乐声部的"干路输出矩阵"写成全零。**
 
-该实现会把音轨暂停在某个位置而不是正常停止。tML 的动态音轨（`ASoundEffectBasedAudioTrack`）
-被这种非标准处置后，对外仍报告 `IsPlaying = true`、队列仍在被消费、音量正常，
-但实际样本流已断，表现为**完全静音**。菜单不走这条 hook，所以主菜单音乐一直正常。
+FNA 的 `SoundEffectInstance.INTERNAL_applyReverb(rvGain)` 做两件事：
+
+```csharp
+float* p = (float*)dspSettings.pMatrixCoefficients;   // 与干路矩阵共用同一块缓冲
+*p = rvGain; if (SrcChannelCount == 2) p[1] = rvGain;
+FAudio.FAudioVoice_SetOutputMatrix(handle, Device().ReverbVoice, SrcChannelCount, 1u, p, 0u);
+```
+
+Overhaul 每帧对每个动态音轨调用它（`AudioEffectsSystem.UpdateMusic`），`rvGain` 默认 0。
+实测结果是声部到 **master** 的矩阵变成 `[0,0,0,0]`，于是：
+
+- 状态机、队列、音量全部正常（`playing=True / pending=8 / queued=8 / realVol=0.444`）；
+- 但输出被乘 0，**完全静音**；
+- 菜单不受影响，因为 `PostUpdateEverything` 在主菜单不执行，`UpdateMusic` 从不运行。
+
+决定性证据（同一份 `client.log`，同一次会话）：
+
+| 时间 | 曲目 | 场景 | `dry`（到 master 的矩阵） | 听感 |
+|---|---|---|---|---|
+| 21:15:12 | `AstralInfection` | 世界内 | `[0,0,0,0]` | 静音 |
+| 21:15:20 | `SunsetStardust` | 主菜单 | `[1,0,0,1]` | 正常 |
+| 21:23:29 | `AstralInfection` | 世界内（混响已关） | `[1,0,0,1]` | 正常 |
+
+日志同时给出了开关的因果：`ReverbSystem enabled.` 时世界内矩阵为零；
+`ReverbSystem disabled: 'Ambience.EnableReverb' is 'false'.` 时矩阵恢复单位阵、声音回来。
 
 ### 13.4 结论与建议
 
 - **与本模组无关**：我们的改动只涉及环境床与主菜单守护，世界内 `curMusic/newMusic` 一行未动。
-- 影响面是**所有模组音乐**（Calamity、The Stars Above 等），不是 TerrariaAmbience 特有。
-- 用户侧解法（已验证可行）：关闭 `TerrariaOverhaul`，或仅关闭其
-  `[Music] EnableMusicPlaybackPositionPreservation`，保留其余功能。
+- 影响面是**所有模组音乐**（Calamity、The Stars Above 等），因为受影响的是
+  `ASoundEffectBasedAudioTrack` 这一类动态音轨；原版 cue 音轨不受影响。
+- 用户侧解法（已验证）：`TerrariaOverhaul\Config.toml` 里 `[Ambience] EnableReverb = false`。
+  代价是失去 Overhaul 给音效加的混响（洞穴/室内空间感），战斗、天气、视觉不受影响。
+  `EnableLowPassFiltering` 与本问题无关，可保持 `true`。
+- 给 Overhaul 源码的修法：不要对 `ASoundEffectBasedAudioTrack` 应用 FNA 的 `INTERNAL_applyReverb`，
+  或在该调用里改用**局部数组**而不是 `dspSettings.pMatrixCoefficients`（FNA 内部把干路与混响发送
+  共用同一块缓冲，是这次污染的源头）。
 
-### 13.5 留下的诊断工具
+### 13.5 走过的两条错路（保留以免重蹈）
 
-`AudioTrackGuardSystem` 在 `debugInterface` 打开时输出 `[AudioProbe]`：
-`cur/new/fade/track/playing/paused/name/dynVol/realVol/pending/queued/rate/ch`。
+1. `[Music] EnableMusicPlaybackPositionPreservation = false`：改了不生效于本问题，
+   因为问题不在"暂停/恢复"，而在矩阵。
+2. `EnableLowPassFiltering` 的单位：`filt=FAudioLowPassFilter@1Hz` 是 **FAudio 的默认值**
+   （归一化 1.0 = 关闭滤波），不是"1 Hz 低通"，一度被误读为病因。
+
+### 13.6 留下的诊断工具
+
+`AudioTrackGuardSystem` 在 `debugInterface` 打开时输出：
+
+- `[AudioProbe] cur/new/fade/track/playing/paused/name/dynVol/realVol/pending/queued/rate/ch/filt/dry/rv`
+- `[AudioBuf] rms=... chunks=... samples=...`（每 4 秒，直接量交给声部的 PCM 电平）
+
 判读：`new=0` → 没判定出曲目；`track=NULL` → 槽位没建起来；`pending=0` → 解码没产出；
-`realVol=0` → 声部被外部静音；全部正常却无声 → 查第三方音频接管（本次即为此类）。
+`realVol=0` → 声部被外部静音；`[AudioBuf] rms≈0` → 解码没产出；
+**状态全正常但 `dry` 全零 → 第三方写坏了输出矩阵**（本次即为此类）。
